@@ -4,7 +4,7 @@
 using namespace boost;
 
 
-int main()
+int main(int argc, char* argv[])
 {
 	// TODO: hard-coded
     const unsigned short port = 8976;
