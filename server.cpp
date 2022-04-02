@@ -3,6 +3,12 @@
 
 using namespace boost;
 
+///////////////////////////////////////////////////////////////////////
+
+bool receiveData(asio::ip::tcp::socket& sock);
+
+///////////////////////////////////////////////////////////////////////
+
 
 int main(int argc, char* argv[])
 {
@@ -39,7 +45,10 @@ int main(int argc, char* argv[])
 			std::cout << "Accepted client connection: " << clientIp << ":" << clientPort << std::endl;
 			
 			// TODO: serve the client
-			;
+			if (!receiveData(sock))
+			{
+				std::cerr << "Failed to receive data from the client\n";
+			}
 		}
 	}
 	catch (system::system_error& ex)
@@ -50,5 +59,36 @@ int main(int argc, char* argv[])
 	}
 	
     return 0;
+}
+
+bool receiveData(asio::ip::tcp::socket& sock)
+{
+	try
+	{
+		std::vector<char> msg(512);
+	
+		std::size_t cbReceived = sock.receive(
+			boost::asio::buffer(msg),
+			0);
+
+		std::cout << "Received:\n\n";
+		
+		for (auto c : msg)
+		{
+			std::cout << c;
+		}
+		std::cout << std::endl;
+
+		// TODO: process the data
+		;
+	}
+	catch (system::system_error& ex)
+	{
+		std::cerr << "Exception on receiving: " << ex.what() << '\n';
+		//std::cerr << "Exception: " << ex.what() << " (" << ex.code() << ")\n";
+		return false;
+	}
+	
+	return true;
 }
 

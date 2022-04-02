@@ -4,9 +4,12 @@
 #include <boost/program_options.hpp>
 
 using namespace boost;
-//using namespace boost::program_options;
+
+///////////////////////////////////////////////////////////////////////
 
 bool parseCmdLineArgs(int argc, char* argv[]);
+
+bool sendHeadRequest(asio::ip::tcp::socket& sock);
 
 ///////////////////////////////////////////////////////////////////////
 
@@ -17,14 +20,13 @@ int main(int argc, char* argv[])
 	const std::string ipStr = "127.0.0.1";
     const unsigned short port = 8976;
 
+#if 0
     if (!parseCmdLineArgs(argc, argv))
     {
     	// TODO: show help
     	return 1;
     }
-    
-    // TODO: temp
-    return 0;
+#endif
 
 	try
 	{
@@ -37,8 +39,12 @@ int main(int argc, char* argv[])
 		asio::ip::tcp::socket sock(io, ep.protocol());
 		
 		sock.connect(ep);
-		
+
 		// TODO: interact with the server
+		if (!sendHeadRequest(sock))
+		{
+			std::cerr << "Failed to send HEAD request to the server\n";
+		}
     }
 	catch (system::system_error& ex)
 	{
@@ -50,6 +56,7 @@ int main(int argc, char* argv[])
     return 0;
 }
 
+#if 0
 bool parseCmdLineArgs(int argc, char* argv[])
 {
 	using namespace boost::program_options;
@@ -95,5 +102,49 @@ bool parseCmdLineArgs(int argc, char* argv[])
 
 	return true;
 }
+#endif
 
+bool sendHeadRequest(asio::ip::tcp::socket& sock)
+{
+	/*
+	HTTP HEAD request example:
+
+	HEAD /echo/head/json HTTP/1.1
+	Accept: application/json
+	Host: reqbin.com
+	*/
+	
+	/*
+	Server Response example:
+
+	HTTP/1.1 200 OK
+	Content-Length: 19
+	Content-Type: application/json
+	*/
+
+	std::string request = "HEAD /echo/head/json HTTP/1.1"
+	                      "Accept: application/json"
+	                      "Host: somehost.com";
+	                      
+	const size_t cbReq = request.length();
+	
+	std::size_t cbSent = {};
+
+	try
+	{
+		cbSent = sock.send(
+			asio::buffer(request.c_str(), cbReq), 
+			0);
+		
+		std::cout << "Sent " << cbSent << " bytes of " << cbReq << std::endl;
+	}
+	catch (system::system_error& ex)
+	{
+		std::cerr << "Exception on sending HEADER: " << ex.what() << '\n';
+		//std::cerr << "Exception: " << ex.what() << " (" << ex.code() << ")\n";
+		return false;
+	}
+	
+	return (cbReq == cbSent);
+}
 
