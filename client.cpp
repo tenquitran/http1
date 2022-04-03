@@ -35,6 +35,8 @@ struct TpPostTimerArgs
 
 bool parseCmdLineArgs(int argc, char* argv[]);
 
+bool sendRequestLength(asio::ip::tcp::socket& sock, int requestLen);
+
 bool sendRequest(asio::ip::tcp::socket& sock, const std::string& request);
 
 // Thread procedure to reload the POST request from file.
@@ -90,7 +92,20 @@ int main(int argc, char* argv[])
 		
 		sock.connect(ep);
 		
+		// Send the HEAD request length and the HEAD request itself.
+
 		std::string request = getHeadRequest();
+		
+		std::cout << "HEAD request length: " << request.length() << std::endl;
+
+		if (sendRequestLength(sock, request.length()))
+		{
+			std::cout << "Send length of the HEAD request to the server" << std::endl;
+		}
+		else
+		{
+			std::cerr << "Failed to send length of the HEAD request to the server\n";
+		}
 
 		// TODO: interact with the server
 		if (sendRequest(sock, request))
@@ -102,7 +117,20 @@ int main(int argc, char* argv[])
 			std::cerr << "Failed to send HEAD request to the server\n";
 		}
 		
+		// Send the POST request length and the POST request itself.
+
 		request = getPostRequest();
+		
+		std::cout << "POST request length: " << request.length() << std::endl;
+		
+		if (sendRequestLength(sock, request.length()))
+		{
+			std::cout << "Send length of the POST request to the server" << std::endl;
+		}
+		else
+		{
+			std::cerr << "Failed to send length of the POST request to the server\n";
+		}
 		
 		// TODO: interact with the server
 		if (sendRequest(sock, request))
@@ -187,6 +215,41 @@ bool parseCmdLineArgs(int argc, char* argv[])
 	return true;
 }
 #endif
+
+bool sendRequestLength(asio::ip::tcp::socket& sock, int requestLen)
+{
+	std::size_t cbSent = {};
+	
+	uint16_t rl = htons(requestLen);
+	
+	size_t cbrl = sizeof(rl);
+	
+	std::cout << "cbrl: " << std::hex << rl << std::endl;
+	
+	std::vector<unsigned char> v(2);
+
+	v[0] = rl >> 8;
+	v[1] = rl & 0x0F;
+	
+	std::cout << "cbrl[0]: " << std::hex << (rl >> 8)     << std::endl;
+	std::cout << "cbrl[1]: " << std::hex << (rl & 0x0F) << std::endl;
+
+	try
+	{
+		cbSent = sock.send(
+			asio::buffer(v, v.size()), 
+			0);
+		
+		std::cout << "Sent " << cbSent << " bytes of " << cbrl << std::endl;
+	}
+	catch (system::system_error& ex)
+	{
+		std::cerr << "Exception on sending HEADER: " << ex.what() << '\n';
+		return false;
+	}
+	
+	return (cbrl == cbSent);
+}
 
 bool sendRequest(asio::ip::tcp::socket& sock, const std::string& request)
 {

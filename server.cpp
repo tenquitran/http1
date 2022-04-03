@@ -49,6 +49,11 @@ int main(int argc, char* argv[])
 			{
 				std::cerr << "Failed to receive data from the client\n";
 			}
+			
+			if (!receiveData(sock))
+			{
+				std::cerr << "Failed to receive data from the client\n";
+			}
 		}
 	}
 	catch (system::system_error& ex)
@@ -65,21 +70,36 @@ bool receiveData(asio::ip::tcp::socket& sock)
 {
 	try
 	{
-		std::vector<char> msg(512);
+		// Request length buffer.
+		std::vector<unsigned char> lenBuff(2);
 	
 		std::size_t cbReceived = sock.receive(
-			boost::asio::buffer(msg),
+			boost::asio::buffer(lenBuff),
+			0);
+		
+		uint16_t n = lenBuff[1];
+		n += lenBuff[0] << 8;
+		
+		uint16_t reqLen = ntohs(n);
+
+		std::cout << "Request length: " << reqLen << std::endl;
+	
+		// Request buffer.
+		std::vector<char> req(reqLen);
+	
+		cbReceived = sock.receive(
+			boost::asio::buffer(req),
 			0);
 
 		std::cout << "Received:\n\n";
 		
-		for (auto c : msg)
+		for (auto c : req)
 		{
 			std::cout << c;
 		}
 		std::cout << std::endl << std::endl;
 
-		// TODO: process the data
+		// TODO: process the request
 		;
 	}
 	catch (system::system_error& ex)
