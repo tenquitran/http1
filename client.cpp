@@ -1,5 +1,7 @@
 #include <iostream>
 #include <string>
+#include <fstream>
+#include <sstream>
 #include <boost/asio.hpp>
 #include <boost/program_options.hpp>
 
@@ -10,14 +12,24 @@ using namespace boost;
 struct TpPostTimerArgs
 {
 	TpPostTimerArgs()
+		: m_delaySeconds(5)
 	{
 		m_exitThread.store(false);
 	}
+	
+	void setDelaySeconds(int val)
+	{
+		m_delaySeconds = val;
+	}
 
 	std::atomic<bool> m_exitThread;
+
 	int m_delaySeconds = {};
-	std::string m_someStr = "String12345";    // TODO: temp
-} tpPostTimerArgs;
+	
+	std::mutex m_requestLock;
+	
+	std::string m_request;
+} postTimerArgs;
 
 ///////////////////////////////////////////////////////////////////////
 
@@ -27,6 +39,8 @@ bool sendHeadRequest(asio::ip::tcp::socket& sock);
 
 // Thread procedure to reload the POST request from file.
 void *tpPostTimer(void *arg);
+
+void loadPostRequest();
 
 ///////////////////////////////////////////////////////////////////////
 
@@ -38,7 +52,10 @@ int main(int argc, char* argv[])
     const unsigned short port = 8976;
     
     // TODO: hard-coded
-    tpPostTimerArgs.m_delaySeconds = 5;
+    postTimerArgs.setDelaySeconds(5);
+    
+    // Initial loading of the POST request.
+    loadPostRequest();
 
 #if 0
     if (!parseCmdLineArgs(argc, argv))
@@ -51,7 +68,7 @@ int main(int argc, char* argv[])
 	try
 	{
 		pthread_t tid1;
-		int t1 = pthread_create(&tid1, nullptr, &tpPostTimer, (void *)&tpPostTimerArgs);
+		int t1 = pthread_create(&tid1, nullptr, &tpPostTimer, (void *)&postTimerArgs);
 		
 		if (0 != t1)
 		{
@@ -77,7 +94,7 @@ int main(int argc, char* argv[])
 		
 		// Notify the POST timer thread to exit and wait for its exit.
 		
-		tpPostTimerArgs.m_exitThread.store(true);
+		postTimerArgs.m_exitThread.store(true);
 
 		void *t1res;
 		
@@ -167,9 +184,25 @@ bool sendHeadRequest(asio::ip::tcp::socket& sock)
 	Content-Type: application/json
 	*/
 
+#if 0
 	std::string request = "HEAD /echo/head/json HTTP/1.1"
 	                      "Accept: application/json"
 	                      "Host: somehost.com";
+#else
+	std::string request;
+#endif
+
+	try
+	{
+		std::lock_guard<std::mutex> lock(postTimerArgs.m_requestLock);
+		
+		request = postTimerArgs.m_request;
+	}
+	catch (std::logic_error&)
+	{
+		std::cout << __FUNCTION__ << ": lock_guard exception";
+		return false;
+	}
 	                      
 	const size_t cbReq = request.length();
 	
@@ -202,14 +235,40 @@ void *tpPostTimer(void *arg)
 	{
 		sleep(pArg->m_delaySeconds);
 		
-		// TODO: reload the POST request field
-		std::cout << "Thread arg: "
-				  << pArg->m_someStr 
-				  << std::endl;
+		loadPostRequest();
 	}
 	
 	std::cout << "POST timer thread exit" << std::endl;
 	
 	return 0;
+}
+
+void loadPostRequest()
+{
+	std::ifstream fs("post_request.txt");
+		
+	if (fs.fail())
+	{
+		std::cerr << "Failed to load POST request from the file\n";
+		return;
+	}
+
+	std::stringstream buffer;
+	buffer << fs.rdbuf();
+	
+	try
+	{
+		std::lock_guard<std::mutex> lock(postTimerArgs.m_requestLock);
+	
+		postTimerArgs.m_request = buffer.str();
+
+		std::cout << "Request contents:\n"
+			  	  << postTimerArgs.m_request 
+			      << std::endl;
+	}
+	catch (std::logic_error&)
+	{
+		std::cout << "POST timer thread: lock_guard exception";
+	}
 }
 
