@@ -35,10 +35,14 @@ struct TpPostTimerArgs
 
 bool parseCmdLineArgs(int argc, char* argv[]);
 
-bool sendHeadRequest(asio::ip::tcp::socket& sock);
+bool sendRequest(asio::ip::tcp::socket& sock, const std::string& request);
 
 // Thread procedure to reload the POST request from file.
 void *tpPostTimer(void *arg);
+
+std::string getHeadRequest();
+
+std::string getPostRequest();
 
 void loadPostRequest();
 
@@ -85,11 +89,29 @@ int main(int argc, char* argv[])
 		asio::ip::tcp::socket sock(io, ep.protocol());
 		
 		sock.connect(ep);
+		
+		std::string request = getHeadRequest();
 
 		// TODO: interact with the server
-		if (!sendHeadRequest(sock))
+		if (sendRequest(sock, request))
+		{
+			std::cout << "Send HEAD request to the server" << std::endl;
+		}
+		else
 		{
 			std::cerr << "Failed to send HEAD request to the server\n";
+		}
+		
+		request = getPostRequest();
+		
+		// TODO: interact with the server
+		if (sendRequest(sock, request))
+		{
+			std::cout << "Send POST request to the server" << std::endl;
+		}
+		else
+		{
+			std::cerr << "Failed to send POST request to the server\n";
 		}
 		
 		// Notify the POST timer thread to exit and wait for its exit.
@@ -166,44 +188,8 @@ bool parseCmdLineArgs(int argc, char* argv[])
 }
 #endif
 
-bool sendHeadRequest(asio::ip::tcp::socket& sock)
+bool sendRequest(asio::ip::tcp::socket& sock, const std::string& request)
 {
-	/*
-	HTTP HEAD request example:
-
-	HEAD /echo/head/json HTTP/1.1
-	Accept: application/json
-	Host: reqbin.com
-	*/
-	
-	/*
-	Server Response example:
-
-	HTTP/1.1 200 OK
-	Content-Length: 19
-	Content-Type: application/json
-	*/
-
-#if 0
-	std::string request = "HEAD /echo/head/json HTTP/1.1"
-	                      "Accept: application/json"
-	                      "Host: somehost.com";
-#else
-	std::string request;
-#endif
-
-	try
-	{
-		std::lock_guard<std::mutex> lock(postTimerArgs.m_requestLock);
-		
-		request = postTimerArgs.m_request;
-	}
-	catch (std::logic_error&)
-	{
-		std::cout << __FUNCTION__ << ": lock_guard exception";
-		return false;
-	}
-	                      
 	const size_t cbReq = request.length();
 	
 	std::size_t cbSent = {};
@@ -219,7 +205,6 @@ bool sendHeadRequest(asio::ip::tcp::socket& sock)
 	catch (system::system_error& ex)
 	{
 		std::cerr << "Exception on sending HEADER: " << ex.what() << '\n';
-		//std::cerr << "Exception: " << ex.what() << " (" << ex.code() << ")\n";
 		return false;
 	}
 	
@@ -243,6 +228,31 @@ void *tpPostTimer(void *arg)
 	return 0;
 }
 
+std::string getHeadRequest()
+{
+	return "HEAD /echo/head/json HTTP/1.1"
+           "Accept: application/json"
+           "Host: somehost.com";
+}
+
+std::string getPostRequest()
+{
+	std::string request;
+
+	try
+	{
+		std::lock_guard<std::mutex> lock(postTimerArgs.m_requestLock);
+		
+		request = postTimerArgs.m_request;
+	}
+	catch (std::logic_error&)
+	{
+		std::cout << __FUNCTION__ << ": lock_guard exception";
+	}
+	
+	return request;
+}
+
 void loadPostRequest()
 {
 	std::ifstream fs("post_request.txt");
@@ -261,10 +271,6 @@ void loadPostRequest()
 		std::lock_guard<std::mutex> lock(postTimerArgs.m_requestLock);
 	
 		postTimerArgs.m_request = buffer.str();
-
-		std::cout << "Request contents:\n"
-			  	  << postTimerArgs.m_request 
-			      << std::endl;
 	}
 	catch (std::logic_error&)
 	{

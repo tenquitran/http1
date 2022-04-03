@@ -77,7 +77,7 @@ bool receiveData(asio::ip::tcp::socket& sock)
 		{
 			std::cout << c;
 		}
-		std::cout << std::endl;
+		std::cout << std::endl << std::endl;
 
 		// TODO: process the data
 		;
