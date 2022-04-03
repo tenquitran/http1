@@ -28,16 +28,15 @@ bool sendMsgLength(boost::asio::ip::tcp::socket& sock, int len)
 	uint16_t rl = htons(len);
 	
 	size_t cbrl = sizeof(rl);
-	
-	std::cout << "cbrl: " << std::hex << rl << std::endl;
-	
+
 	std::vector<unsigned char> v(2);
 
 	v[0] = rl >> 8;
 	v[1] = rl & 0x0F;
 	
-	std::cout << "cbrl[0]: " << std::hex << (rl >> 8)     << std::endl;
-	std::cout << "cbrl[1]: " << std::hex << (rl & 0x0F) << std::endl;
+	//std::cout << "cbrl: " << std::hex << rl << std::endl;
+	//std::cout << "cbrl[0]: " << std::hex << (rl >> 8)     << std::endl;
+	//std::cout << "cbrl[1]: " << std::hex << (rl & 0x0F) << std::endl;
 
 	try
 	{
@@ -77,5 +76,51 @@ bool sendMsg(boost::asio::ip::tcp::socket& sock, const std::string& msg)
 	}
 	
 	return (cbReq == cbSent);
+}
+
+std::string receiveData(asio::ip::tcp::socket& sock)
+{
+	std::string received;
+
+	try
+	{
+		// Request length buffer.
+		std::vector<unsigned char> lenBuff(2);
+	
+		std::size_t cbReceived = sock.receive(
+			boost::asio::buffer(lenBuff),
+			0);
+		
+		uint16_t n = lenBuff[1];
+		n += lenBuff[0] << 8;
+		
+		uint16_t reqLen = ntohs(n);
+
+		std::cout << "Request length: " << reqLen << std::endl;
+	
+		// Request buffer.
+		std::vector<char> req(reqLen);
+	
+		cbReceived = sock.receive(
+			boost::asio::buffer(req),
+			0);
+
+		std::cout << "Received:\n\n";
+
+		received.reserve(reqLen);
+		
+		for (auto c : req)
+		{
+			std::cout << c;
+			received += c;
+		}
+		std::cout << std::endl << std::endl;
+	}
+	catch (system::system_error& ex)
+	{
+		std::cerr << "Exception on receiving: " << ex.what() << '\n';
+	}
+	
+	return received;
 }
 

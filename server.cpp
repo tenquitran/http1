@@ -8,9 +8,15 @@ using namespace boost;
 
 ///////////////////////////////////////////////////////////////////////
 
-bool receiveData(asio::ip::tcp::socket& sock, ERequest& requestType);
-
 bool respond(asio::ip::tcp::socket& sock, ERequest requestType);
+
+std::string getHeadResponse();
+
+std::string getPostResponse();
+
+ERequest getMessageType(const std::string& msg);
+
+void exchangeMessages(asio::ip::tcp::socket& sock);
 
 ///////////////////////////////////////////////////////////////////////
 
@@ -50,19 +56,12 @@ int main(int argc, char* argv[])
 			unsigned short clientPort = sock.remote_endpoint().port();
 			
 			std::cout << "Accepted client connection: " << clientIp << ":" << clientPort << std::endl;
-
-			if (receiveData(sock, requestType))
-			{
-				if (!respond(sock, requestType))
-				{
-					std::cerr << "Failed to respond to the client\n";
-				}
-			}
-			else
-			{
-				std::cerr << "Failed to receive data from the client\n";
-			}
 			
+			exchangeMessages(sock);
+			
+			exchangeMessages(sock);
+
+			/*
 			if (receiveData(sock, requestType))
 			{
 				if (!respond(sock, requestType))
@@ -74,6 +73,7 @@ int main(int argc, char* argv[])
 			{
 				std::cerr << "Failed to receive data from the client\n";
 			}
+			*/
 		}
 	}
 	catch (system::system_error& ex)
@@ -86,72 +86,32 @@ int main(int argc, char* argv[])
     return 0;
 }
 
-bool receiveData(asio::ip::tcp::socket& sock, ERequest& requestType)
+void exchangeMessages(asio::ip::tcp::socket& sock)
 {
-	try
+	std::string fromClient = receiveData(sock);
+
+	if (fromClient.length() < 1)
 	{
-		requestType = ERequest::Undefined;
-	
-		// Request length buffer.
-		std::vector<unsigned char> lenBuff(2);
-	
-		std::size_t cbReceived = sock.receive(
-			boost::asio::buffer(lenBuff),
-			0);
-		
-		uint16_t n = lenBuff[1];
-		n += lenBuff[0] << 8;
-		
-		uint16_t reqLen = ntohs(n);
-
-		std::cout << "Request length: " << reqLen << std::endl;
-	
-		// Request buffer.
-		std::vector<char> req(reqLen);
-	
-		cbReceived = sock.receive(
-			boost::asio::buffer(req),
-			0);
-
-		std::cout << "Received:\n\n";
-		
-		std::string reqStr;
-		reqStr.reserve(reqLen);
-		
-		for (auto c : req)
-		{
-			std::cout << c;
-			reqStr += c;
-		}
-		std::cout << std::endl << std::endl;
-
-		// Determine whether the client have sent a HEAD or a POST request.
-
-		if (0 == reqStr.find("HEAD"))
-		{
-			requestType = ERequest::Head;
-		}
-		else if (0 == reqStr.find("POST"))
-		{
-			requestType = ERequest::Post;
-		}
-		
-		std::cout << "Received a " << requestTypeToStr(requestType) << " request" << std::endl;
-		
-		if (ERequest::Undefined == requestType)
-		{
-			std::cerr << "Invalid request type\n";
-			return false;
-		}
-	}
-	catch (system::system_error& ex)
-	{
-		std::cerr << "Exception on receiving: " << ex.what() << '\n';
-		//std::cerr << "Exception: " << ex.what() << " (" << ex.code() << ")\n";
-		return false;
+		std::cerr << "Failed to receive data from the client\n";
+		return;
 	}
 	
-	return true;
+	ERequest requestType = getMessageType(fromClient);
+
+	std::cout << "Received a " << requestTypeToStr(requestType) 
+	          << " request from the client" << std::endl;
+	
+	if (ERequest::Undefined == requestType)
+	{
+		// TODO: respond to the client with an error message
+		std::cerr << "Invalid request type\n";
+		return;
+	}
+
+	if (!respond(sock, requestType))
+	{
+		std::cerr << "Failed to respond to the client\n";
+	}
 }
 
 bool respond(asio::ip::tcp::socket& sock, ERequest requestType)
@@ -161,17 +121,13 @@ bool respond(asio::ip::tcp::socket& sock, ERequest requestType)
 	switch (requestType)
 	{
 		case ERequest::Head:
-			response = "HTTP/1.1 200 OK\n"
-                       "Content-Length: 19\n"
-                       "Content-Type: application/json";
+			response = getHeadResponse();
 			break;
 		case ERequest::Post:
-			response = "HTTP/1.1 200 OK\n"
-                       "Content-Length: 19\n"
-                       "Content-Type: application/json\n\n"
-                       "{\"success\":\"true\"}";
+			response = getPostResponse();
 			break;
 		default:
+			// TODO: send error response to the client
 			std::cerr << __FUNCTION__ << ": unsupported request type\n";
 			return false;
 	}
@@ -182,22 +138,51 @@ bool respond(asio::ip::tcp::socket& sock, ERequest requestType)
 
 	if (sendMsgLength(sock, response.length()))
 	{
-		std::cout << "Send length of the " << reqStr << " response to the server" << std::endl;
+		std::cout << "Sent length of the " << reqStr << " response to the client" << std::endl;
 	}
 	else
 	{
-		std::cerr << "Failed to send length of the " << reqStr << " response to the server\n";
+		std::cerr << "Failed to send length of the " << reqStr << " response to the client\n";
 	}
 	
 	if (sendMsg(sock, response))
 	{
-		std::cout << "Send " << reqStr << " response to the server" << std::endl;
+		std::cout << "Sent " << reqStr << " response to the client" << std::endl;
 	}
 	else
 	{
-		std::cerr << "Failed to send " << reqStr << " response to the server\n";
+		std::cerr << "Failed to send " << reqStr << " response to the client\n";
 	}
 	
 	return true;
+}
+
+ERequest getMessageType(const std::string& msg)
+{
+	if (0 == msg.find("HEAD"))
+	{
+		return ERequest::Head;
+	}
+	else if (0 == msg.find("POST"))
+	{
+		return ERequest::Post;
+	}
+	
+	return ERequest::Undefined;
+}
+
+std::string getHeadResponse()
+{
+	return "HTTP/1.1 200 OK\n"
+           "Content-Length: 19\n"
+           "Content-Type: application/json";
+}
+
+std::string getPostResponse()
+{
+	return "HTTP/1.1 200 OK\n"
+           "Content-Length: 19\n"
+           "Content-Type: application/json\n\n"
+           "{\"success\":\"true\"}";
 }
 

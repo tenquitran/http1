@@ -48,6 +48,8 @@ std::string getPostRequest();
 
 void loadPostRequest();
 
+void exchangeMessages(asio::ip::tcp::socket& sock, ERequest requestType);
+
 ///////////////////////////////////////////////////////////////////////
 
 
@@ -91,56 +93,10 @@ int main(int argc, char* argv[])
 		asio::ip::tcp::socket sock(io, ep.protocol());
 		
 		sock.connect(ep);
-		
-		// Send the HEAD request length and the HEAD request itself.
 
-		std::string request = getHeadRequest();
-		
-		std::cout << "HEAD request length: " << request.length() << std::endl;
+		exchangeMessages(sock, ERequest::Head);
 
-		if (sendMsgLength(sock, request.length()))
-		{
-			std::cout << "Send length of the HEAD request to the server" << std::endl;
-		}
-		else
-		{
-			std::cerr << "Failed to send length of the HEAD request to the server\n";
-		}
-
-		// TODO: interact with the server
-		if (sendMsg(sock, request))
-		{
-			std::cout << "Send HEAD request to the server" << std::endl;
-		}
-		else
-		{
-			std::cerr << "Failed to send HEAD request to the server\n";
-		}
-		
-		// Send the POST request length and the POST request itself.
-
-		request = getPostRequest();
-		
-		std::cout << "POST request length: " << request.length() << std::endl;
-		
-		if (sendMsgLength(sock, request.length()))
-		{
-			std::cout << "Send length of the POST request to the server" << std::endl;
-		}
-		else
-		{
-			std::cerr << "Failed to send length of the POST request to the server\n";
-		}
-		
-		// TODO: interact with the server
-		if (sendMsg(sock, request))
-		{
-			std::cout << "Send POST request to the server" << std::endl;
-		}
-		else
-		{
-			std::cerr << "Failed to send POST request to the server\n";
-		}
+		exchangeMessages(sock, ERequest::Post);
 		
 		// Notify the POST timer thread to exit and wait for its exit.
 		
@@ -280,6 +236,63 @@ void loadPostRequest()
 	catch (std::logic_error&)
 	{
 		std::cout << "POST timer thread: lock_guard exception";
+	}
+}
+
+void exchangeMessages(asio::ip::tcp::socket& sock, ERequest requestType)
+{
+	std::string request;
+	
+	switch (requestType)
+	{
+		case ERequest::Head:
+			request = getHeadRequest();
+			break;
+		case ERequest::Post:
+			request = getPostRequest();
+			break;
+		default:
+			std::cerr << __FUNCTION__ << ": invalid message type\n";
+			return;
+	}
+	
+	// Send the request length.
+
+	std::string reqTypeStr = requestTypeToStr(requestType);
+
+	std::cout << reqTypeStr << " request length: " << request.length() << std::endl;
+
+	if (sendMsgLength(sock, request.length()))
+	{
+		std::cout << "Sent length of the " << reqTypeStr << " request to the server" << std::endl;
+	}
+	else
+	{
+		std::cerr << "Failed to send length of the " << reqTypeStr << " request to the server\n";
+	}
+	
+	// Send the request itself.
+
+	if (sendMsg(sock, request))
+	{
+		std::cout << "Sent " << reqTypeStr << " request to the server" << std::endl;
+	}
+	else
+	{
+		std::cerr << "Failed to send " << reqTypeStr << " request to the server\n";
+	}
+	
+	// Receive the server response.
+	
+	std::string response = receiveData(sock);
+	
+	if (response.length() > 0)
+	{
+		std::cerr << "Received " << reqTypeStr << " response from the server\n";
+	}
+	else
+	{
+		std::cerr << "Failed to receive " << reqTypeStr << " response from the server\n";
 	}
 }
 

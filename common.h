@@ -21,6 +21,8 @@ bool sendMsgLength(boost::asio::ip::tcp::socket& sock, int len);
 
 bool sendMsg(boost::asio::ip::tcp::socket& sock, const std::string& msg);
 
+std::string receiveData(boost::asio::ip::tcp::socket& sock);
+
 ///////////////////////////////////////////////////////////////////////
 
 #endif
