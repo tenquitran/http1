@@ -4,10 +4,14 @@
 #include <sstream>
 #include <boost/asio.hpp>
 #include <boost/program_options.hpp>
+#include "common.h"
+
+///////////////////////////////////////////////////////////////////////
 
 using namespace boost;
 
 ///////////////////////////////////////////////////////////////////////
+
 
 struct TpPostTimerArgs
 {
@@ -34,10 +38,6 @@ struct TpPostTimerArgs
 ///////////////////////////////////////////////////////////////////////
 
 bool parseCmdLineArgs(int argc, char* argv[]);
-
-bool sendRequestLength(asio::ip::tcp::socket& sock, int requestLen);
-
-bool sendRequest(asio::ip::tcp::socket& sock, const std::string& request);
 
 // Thread procedure to reload the POST request from file.
 void *tpPostTimer(void *arg);
@@ -98,7 +98,7 @@ int main(int argc, char* argv[])
 		
 		std::cout << "HEAD request length: " << request.length() << std::endl;
 
-		if (sendRequestLength(sock, request.length()))
+		if (sendMsgLength(sock, request.length()))
 		{
 			std::cout << "Send length of the HEAD request to the server" << std::endl;
 		}
@@ -108,7 +108,7 @@ int main(int argc, char* argv[])
 		}
 
 		// TODO: interact with the server
-		if (sendRequest(sock, request))
+		if (sendMsg(sock, request))
 		{
 			std::cout << "Send HEAD request to the server" << std::endl;
 		}
@@ -123,7 +123,7 @@ int main(int argc, char* argv[])
 		
 		std::cout << "POST request length: " << request.length() << std::endl;
 		
-		if (sendRequestLength(sock, request.length()))
+		if (sendMsgLength(sock, request.length()))
 		{
 			std::cout << "Send length of the POST request to the server" << std::endl;
 		}
@@ -133,7 +133,7 @@ int main(int argc, char* argv[])
 		}
 		
 		// TODO: interact with the server
-		if (sendRequest(sock, request))
+		if (sendMsg(sock, request))
 		{
 			std::cout << "Send POST request to the server" << std::endl;
 		}
@@ -216,64 +216,6 @@ bool parseCmdLineArgs(int argc, char* argv[])
 }
 #endif
 
-bool sendRequestLength(asio::ip::tcp::socket& sock, int requestLen)
-{
-	std::size_t cbSent = {};
-	
-	uint16_t rl = htons(requestLen);
-	
-	size_t cbrl = sizeof(rl);
-	
-	std::cout << "cbrl: " << std::hex << rl << std::endl;
-	
-	std::vector<unsigned char> v(2);
-
-	v[0] = rl >> 8;
-	v[1] = rl & 0x0F;
-	
-	std::cout << "cbrl[0]: " << std::hex << (rl >> 8)     << std::endl;
-	std::cout << "cbrl[1]: " << std::hex << (rl & 0x0F) << std::endl;
-
-	try
-	{
-		cbSent = sock.send(
-			asio::buffer(v, v.size()), 
-			0);
-		
-		std::cout << "Sent " << cbSent << " bytes of " << cbrl << std::endl;
-	}
-	catch (system::system_error& ex)
-	{
-		std::cerr << "Exception on sending HEADER: " << ex.what() << '\n';
-		return false;
-	}
-	
-	return (cbrl == cbSent);
-}
-
-bool sendRequest(asio::ip::tcp::socket& sock, const std::string& request)
-{
-	const size_t cbReq = request.length();
-	
-	std::size_t cbSent = {};
-
-	try
-	{
-		cbSent = sock.send(
-			asio::buffer(request.c_str(), cbReq), 
-			0);
-		
-		std::cout << "Sent " << cbSent << " bytes of " << cbReq << std::endl;
-	}
-	catch (system::system_error& ex)
-	{
-		std::cerr << "Exception on sending HEADER: " << ex.what() << '\n';
-		return false;
-	}
-	
-	return (cbReq == cbSent);
-}
-
 // Thread procedure to reload the POST request from file.
 void *tpPostTimer(void *arg)
 {
@@ -293,8 +235,8 @@ void *tpPostTimer(void *arg)
 
 std::string getHeadRequest()
 {
-	return "HEAD /echo/head/json HTTP/1.1"
-           "Accept: application/json"
+	return "HEAD /echo/head/json HTTP/1.1\n"
+           "Accept: application/json\n"
            "Host: somehost.com";
 }
 
