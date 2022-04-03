@@ -7,9 +7,26 @@ using namespace boost;
 
 ///////////////////////////////////////////////////////////////////////
 
+struct TpPostTimerArgs
+{
+	TpPostTimerArgs()
+	{
+		m_exitThread.store(false);
+	}
+
+	std::atomic<bool> m_exitThread;
+	int m_delaySeconds = {};
+	std::string m_someStr = "String12345";    // TODO: temp
+} tpPostTimerArgs;
+
+///////////////////////////////////////////////////////////////////////
+
 bool parseCmdLineArgs(int argc, char* argv[]);
 
 bool sendHeadRequest(asio::ip::tcp::socket& sock);
+
+// Thread procedure to reload the POST request from file.
+void *tpPostTimer(void *arg);
 
 ///////////////////////////////////////////////////////////////////////
 
@@ -19,6 +36,9 @@ int main(int argc, char* argv[])
 	// TODO: hard-coded
 	const std::string ipStr = "127.0.0.1";
     const unsigned short port = 8976;
+    
+    // TODO: hard-coded
+    tpPostTimerArgs.m_delaySeconds = 5;
 
 #if 0
     if (!parseCmdLineArgs(argc, argv))
@@ -30,6 +50,15 @@ int main(int argc, char* argv[])
 
 	try
 	{
+		pthread_t tid1;
+		int t1 = pthread_create(&tid1, nullptr, &tpPostTimer, (void *)&tpPostTimerArgs);
+		
+		if (0 != t1)
+		{
+			std::cerr << "Failed to create POST timer thread: " << t1 << '\n';
+			return 2;
+		}
+
 		asio::ip::tcp protocol = asio::ip::tcp::v4();
 		
 		asio::ip::tcp::endpoint ep(asio::ip::address::from_string(ipStr), port);
@@ -45,12 +74,28 @@ int main(int argc, char* argv[])
 		{
 			std::cerr << "Failed to send HEAD request to the server\n";
 		}
+		
+		// Notify the POST timer thread to exit and wait for its exit.
+		
+		tpPostTimerArgs.m_exitThread.store(true);
+
+		void *t1res;
+		
+		t1 = pthread_join(tid1, &t1res);
+		
+		if (0 != t1)
+		{
+			std::cerr << "Failed to join POST timer thread: " << t1 << '\n';
+			return 3;
+		}
+		
+		std::cout << "POST timer thread returned " << (long)t1res << std::endl;
     }
 	catch (system::system_error& ex)
 	{
 		std::cerr << "Exception: " << ex.what() << '\n';
 		//std::cerr << "Exception: " << ex.what() << " (" << ex.code() << ")\n";
-		return 2;
+		return 4;
 	}
 
     return 0;
@@ -146,5 +191,25 @@ bool sendHeadRequest(asio::ip::tcp::socket& sock)
 	}
 	
 	return (cbReq == cbSent);
+}
+
+// Thread procedure to reload the POST request from file.
+void *tpPostTimer(void *arg)
+{
+	TpPostTimerArgs *pArg = (TpPostTimerArgs *)arg;
+
+	while (!pArg->m_exitThread)
+	{
+		sleep(pArg->m_delaySeconds);
+		
+		// TODO: reload the POST request field
+		std::cout << "Thread arg: "
+				  << pArg->m_someStr 
+				  << std::endl;
+	}
+	
+	std::cout << "POST timer thread exit" << std::endl;
+	
+	return 0;
 }
 
