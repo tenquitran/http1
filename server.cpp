@@ -173,16 +173,16 @@ ERequest getMessageType(const std::string& msg)
 
 std::string getHeadResponse()
 {
-	return "HTTP/1.1 200 OK\n"
-           "Content-Length: 19\n"
-           "Content-Type: application/json";
+	return "HTTP/1.1 200 OK\r\n"
+           "Content-Length: 27\r\n"
+           "Content-Type: application/json\r\n\r\n";
 }
 
 std::string getPostResponse()
 {
-	return "HTTP/1.1 200 OK\n"
-           "Content-Length: 19\n"
-           "Content-Type: application/json\n\n"
-           "{\"success\":\"true\"}";
+	return "HTTP/1.1 200 OK\r\n"
+           "Content-Length: 32\r\n"
+           "Content-Type: application/json\r\n\r\n"
+           "{\"success\":\"true\"}\r\n\r\n";
 }
 

@@ -191,9 +191,9 @@ void *tpPostTimer(void *arg)
 
 std::string getHeadRequest()
 {
-	return "HEAD /echo/head/json HTTP/1.1\n"
-           "Accept: application/json\n"
-           "Host: somehost.com";
+	return "HEAD /echo/head/json HTTP/1.1\r\n"
+           "Accept: application/json\r\n"
+           "Host: somehost.com\r\n\r\n";
 }
 
 std::string getPostRequest()
@@ -256,6 +256,8 @@ void exchangeMessages(asio::ip::tcp::socket& sock, ERequest requestType)
 			return;
 	}
 	
+	// TODO: uncomment
+#if 1
 	// Send the request length.
 
 	std::string reqTypeStr = requestTypeToStr(requestType);
@@ -270,6 +272,9 @@ void exchangeMessages(asio::ip::tcp::socket& sock, ERequest requestType)
 	{
 		std::cerr << "Failed to send length of the " << reqTypeStr << " request to the server\n";
 	}
+#else
+	std::string reqTypeStr = requestTypeToStr(requestType);
+#endif
 	
 	// Send the request itself.
 

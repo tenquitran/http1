@@ -1,6 +1,1 @@
-POST /test HTTP/1.1
-Host: somehost.com
-Content-Type: application/x-www-form-urlencoded
-Content-Length: 34
-
-name=John&surname=Smith&id=12345
+POST /test HTTP/1.1\r\nHost: somehost.com\r\nContent-Type: application/x-www-form-urlencoded\r\nContent-Length: 34\r\n\r\nusername=John&surname=Smith&id=12345\r\n\r\n
