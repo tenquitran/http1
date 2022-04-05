@@ -224,14 +224,24 @@ void loadPostRequest()
 		return;
 	}
 
-	std::stringstream buffer;
-	buffer << fs.rdbuf();
+	std::string msg;
+	std::string line;
+	
+	while (std::getline(fs, line))
+	{
+		msg += line + "\r\n";
+	}
+	msg += "\r\n\r\n";
+
+	//std::stringstream buffer;
+	//buffer << fs.rdbuf();
 	
 	try
 	{
 		std::lock_guard<std::mutex> lock(postTimerArgs.m_requestLock);
 	
-		postTimerArgs.m_request = buffer.str();
+		//postTimerArgs.m_request = buffer.str();
+		postTimerArgs.m_request = msg;
 	}
 	catch (std::logic_error&)
 	{
