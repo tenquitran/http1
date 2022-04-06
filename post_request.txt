@@ -1,6 +1,11 @@
 POST /test HTTP/1.1
 Host: somehost.com
-Content-Type: application/x-www-form-urlencoded
-Content-Length: 36
+Content-Type: application/json; utf-8
+Content-Length: 54
+Accept: application/json
 
-username=John&surname=Smith&id=12345
+{
+	"username":"John", 
+	"surname":"Smith", 
+	"id":"12345"
+}

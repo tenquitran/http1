@@ -35,9 +35,21 @@ struct TpPostTimerArgs
 	std::string m_request;
 } postTimerArgs;
 
+
+struct CmdLineArguments
+{
+	std::string m_ipAddress;
+	
+	unsigned short m_port = {};
+	
+	int m_reloadSeconds = {};
+};
+
 ///////////////////////////////////////////////////////////////////////
 
-bool parseCmdLineArgs(int argc, char* argv[]);
+void displayUsage(const char* programName);
+
+bool parseCmdLineArgs(int argc, char* argv[], CmdLineArguments& args);
 
 // Thread procedure to reload the POST request from file.
 void *tpPostTimer(void *arg);
@@ -55,23 +67,20 @@ void exchangeMessages(asio::ip::tcp::socket& sock, ERequest requestType);
 
 int main(int argc, char* argv[])
 {
-	// TODO: hard-coded
-	const std::string ipStr = "127.0.0.1";
-    const unsigned short port = 8976;
-    
-    // TODO: hard-coded
-    postTimerArgs.setDelaySeconds(5);
-    
+    // Server port is 8976
+
     // Initial loading of the POST request.
     loadPostRequest();
+    
+    CmdLineArguments args;
 
-#if 0
-    if (!parseCmdLineArgs(argc, argv))
+    if (!parseCmdLineArgs(argc, argv, args))
     {
-    	// TODO: show help
+    	displayUsage(argv[0]);
     	return 1;
     }
-#endif
+
+    postTimerArgs.setDelaySeconds(args.m_reloadSeconds);
 
 	try
 	{
@@ -86,11 +95,16 @@ int main(int argc, char* argv[])
 
 		asio::ip::tcp protocol = asio::ip::tcp::v4();
 		
-		asio::ip::tcp::endpoint ep(asio::ip::address::from_string(ipStr), port);
+		asio::ip::tcp::endpoint ep(
+			asio::ip::address::from_string(args.m_ipAddress), 
+			args.m_port);
 		
 		asio::io_service io;
 		
 		asio::ip::tcp::socket sock(io, ep.protocol());
+		
+		std::cout << "Trying to connect to " << args.m_ipAddress 
+		          << ":" << args.m_port << std::endl;
 		
 		sock.connect(ep);
 
@@ -128,25 +142,34 @@ int main(int argc, char* argv[])
     return 0;
 }
 
-#if 0
-bool parseCmdLineArgs(int argc, char* argv[])
+void displayUsage(const char* programName)
+{
+	// --host=hostname   - the host of HTTP server
+	// --port=portnumber - the port of HTTP server
+	// --reload=XX       - every XX seconds reload the file where the Request is stored
+
+	std::cout << "Usage:\n"
+			  << programName 
+			  << " --host=<ip_address> --port=<port_number> --reload=<seconds>\n"
+			  << "\nExample:\n"
+	          << programName 
+	          << " --host=127.0.0.1 --port=8976 --reload=5" 
+	          << std::endl;
+}
+
+bool parseCmdLineArgs(int argc, char* argv[], CmdLineArguments& args)
 {
 	using namespace boost::program_options;
 	
-	if (argc < 3)
-	{
-		// TODO: display usage info
-		return false;
-	}
-
-    // --host=hostname - the host of HTTP server
-	// --port=portnumber - the port of HTTP server
+	if (argc < 4)
+		{return false;}
 
     options_description desc{"CommandLineOptions"};
     
     desc.add_options()
-      ("host", value<std::string>()->default_value("127.0.0.1"), "HostName")
-      ("port", value<int>()->default_value(8976), "Port");
+      ("host",   value<std::string>()->default_value("127.0.0.1"), "HostName")
+      ("port",   value<int>()->default_value(8976),                "Port")
+      ("reload", value<int>()->default_value(5),                   "Reload");
       
     variables_map vm;
     
@@ -165,16 +188,29 @@ bool parseCmdLineArgs(int argc, char* argv[])
 	if (vm.count("host"))
 	{
 		std::cout << "Host name: " << vm["host"].as<std::string>() << std::endl;
+		args.m_ipAddress = vm["host"].as<std::string>();
 	}
+	else
+		{return false;}
 	
 	if (vm.count("port"))
 	{
 		std::cout << "Port: " << vm["port"].as<int>() << std::endl;
+		args.m_port = vm["port"].as<int>();
 	}
+	else
+		{return false;}
+	
+	if (vm.count("reload"))
+	{
+		std::cout << "Reload: " << vm["reload"].as<int>() << std::endl;
+		args.m_reloadSeconds = vm["reload"].as<int>();
+	}
+	else
+		{return false;}
 
 	return true;
 }
-#endif
 
 // Thread procedure to reload the POST request from file.
 void *tpPostTimer(void *arg)
