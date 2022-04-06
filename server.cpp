@@ -61,19 +61,9 @@ int main(int argc, char* argv[])
 			
 			exchangeMessages(sock);
 
-			/*
-			if (receiveData(sock, requestType))
-			{
-				if (!respond(sock, requestType))
-				{
-					std::cerr << "Failed to respond to the client\n";
-				}
-			}
-			else
-			{
-				std::cerr << "Failed to receive data from the client\n";
-			}
-			*/
+			sock.shutdown(boost::asio::ip::tcp::socket::shutdown_both);
+		
+			sock.close();
 		}
 	}
 	catch (system::system_error& ex)

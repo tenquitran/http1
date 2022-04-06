@@ -98,6 +98,10 @@ int main(int argc, char* argv[])
 
 		exchangeMessages(sock, ERequest::Post);
 		
+		sock.shutdown(boost::asio::ip::tcp::socket::shutdown_both);
+		
+		sock.close();
+		
 		// Notify the POST timer thread to exit and wait for its exit.
 		
 		postTimerArgs.m_exitThread.store(true);
