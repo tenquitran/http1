@@ -195,9 +195,15 @@ void *tpPostTimer(void *arg)
 
 std::string getHeadRequest()
 {
-	return "HEAD /echo/head/json HTTP/1.1\r\n"
+#if 1
+	return "HEAD /index.html HTTP/1.1\r\n"
            "Accept: application/json\r\n"
            "Host: somehost.com\r\n\r\n";
+#else
+	return "HEAD /index.html HTTP/1.1\r\n"
+           "Accept: text/html\r\n"
+           "Host: somehost.com\r\n\r\n";
+#endif
 }
 
 std::string getPostRequest()
