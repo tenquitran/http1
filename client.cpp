@@ -269,8 +269,24 @@ void loadPostRequest()
 		std::cerr << "Failed to load POST request from the file\n";
 		return;
 	}
+	
+	std::stringstream buffer;
+	buffer << fs.rdbuf();
+	
+	std::string payload = buffer.str();
 
-	std::string msg;
+	// 2 bytes for "\r\n" following the payload.
+	std::string payloadLen = std::to_string(payload.length() + 2);
+
+	std::string request = "POST /test HTTP/1.1\r\n"
+						  "Host: somehost.com\r\n"
+						  "Content-Type: application/json; utf-8\r\n"
+						  "Content-Length: " + payloadLen + "\r\n"
+						  "Accept: application/json\r\n\r\n";
+	
+	request += payload + "\r\n\r\n";
+	
+#if 0
 	std::string line;
 	
 	while (std::getline(fs, line))
@@ -278,16 +294,14 @@ void loadPostRequest()
 		msg += line + "\r\n";
 	}
 	msg += "\r\n\r\n";
+#endif
 
-	//std::stringstream buffer;
-	//buffer << fs.rdbuf();
-	
 	try
 	{
 		std::lock_guard<std::mutex> lock(postTimerArgs.m_requestLock);
 	
 		//postTimerArgs.m_request = buffer.str();
-		postTimerArgs.m_request = msg;
+		postTimerArgs.m_request = request;
 	}
 	catch (std::logic_error&)
 	{
