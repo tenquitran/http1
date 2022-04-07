@@ -33,6 +33,8 @@ struct TpPostTimerArgs
 	std::mutex m_requestLock;
 	
 	std::string m_request;
+	
+	std::string m_requestFilePath;
 } postTimerArgs;
 
 
@@ -41,6 +43,8 @@ struct CmdLineArguments
 	std::string m_ipAddress;
 	
 	unsigned short m_port = {};
+	
+	std::string m_requestFilePath;
 	
 	int m_reloadSeconds = {};
 };
@@ -58,7 +62,7 @@ std::string getHeadRequest();
 
 std::string getPostRequest();
 
-void loadPostRequest();
+void loadPostRequest(const std::string& filePath);
 
 void exchangeMessages(asio::ip::tcp::socket& sock, ERequest requestType);
 
@@ -69,9 +73,6 @@ int main(int argc, char* argv[])
 {
     // Server port is 8976
 
-    // Initial loading of the POST request.
-    loadPostRequest();
-    
     CmdLineArguments args;
 
     if (!parseCmdLineArgs(argc, argv, args))
@@ -79,6 +80,11 @@ int main(int argc, char* argv[])
     	displayUsage(argv[0]);
     	return 1;
     }
+
+    // Initial loading of the POST request.
+    loadPostRequest(args.m_requestFilePath);
+    
+    postTimerArgs.m_requestFilePath = args.m_requestFilePath;
 
     postTimerArgs.setDelaySeconds(args.m_reloadSeconds);
 
@@ -147,13 +153,15 @@ void displayUsage(const char* programName)
 	// --host=hostname   - the host of HTTP server
 	// --port=portnumber - the port of HTTP server
 	// --reload=XX       - every XX seconds reload the file where the Request is stored
+	// --request=/path/to/Request.json
 
 	std::cout << "Usage:\n"
 			  << programName 
-			  << " --host=<ip_address> --port=<port_number> --reload=<seconds>\n"
+			  << " --host=<ip_address> --port=<port_number> "
+			     "--request=/path/to/Request.json --reload=<seconds>\n"
 			  << "\nExample:\n"
 	          << programName 
-	          << " --host=127.0.0.1 --port=8976 --reload=5" 
+	          << " --host=127.0.0.1 --port=8976 --request=requests/post_request.json --reload=5" 
 	          << std::endl;
 }
 
@@ -167,9 +175,10 @@ bool parseCmdLineArgs(int argc, char* argv[], CmdLineArguments& args)
     options_description desc{"CommandLineOptions"};
     
     desc.add_options()
-      ("host",   value<std::string>()->default_value("127.0.0.1"), "HostName")
-      ("port",   value<int>()->default_value(8976),                "Port")
-      ("reload", value<int>()->default_value(5),                   "Reload");
+      ("host",    value<std::string>()->default_value("127.0.0.1"), "HostName")
+      ("port",    value<int>()->default_value(8976),                "Port")
+      ("request", value<std::string>()->default_value(""),          "RequestPath")
+      ("reload",  value<int>()->default_value(5),                   "Reload");
       
     variables_map vm;
     
@@ -200,6 +209,14 @@ bool parseCmdLineArgs(int argc, char* argv[], CmdLineArguments& args)
 	}
 	else
 		{return false;}
+
+	if (vm.count("request"))
+	{
+		std::cout << "Request path: " << vm["request"].as<std::string>() << std::endl;
+		args.m_requestFilePath = vm["request"].as<std::string>();
+	}
+	else
+		{return false;}
 	
 	if (vm.count("reload"))
 	{
@@ -221,7 +238,7 @@ void *tpPostTimer(void *arg)
 	{
 		sleep(pArg->m_delaySeconds);
 		
-		loadPostRequest();
+		loadPostRequest(pArg->m_requestFilePath);
 	}
 	
 	std::cout << "POST timer thread exit" << std::endl;
@@ -260,13 +277,14 @@ std::string getPostRequest()
 	return request;
 }
 
-void loadPostRequest()
+void loadPostRequest(const std::string& filePath)
 {
-	std::ifstream fs("post_request.txt");
+	std::ifstream fs(filePath);
 		
 	if (fs.fail())
 	{
-		std::cerr << "Failed to load POST request from the file\n";
+		std::cerr << "Failed to load POST request from the file "
+		          << "\"" << filePath << "\"\n";
 		return;
 	}
 	
@@ -326,8 +344,6 @@ void exchangeMessages(asio::ip::tcp::socket& sock, ERequest requestType)
 			return;
 	}
 	
-	// TODO: uncomment
-#if 1
 	// Send the request length.
 
 	std::string reqTypeStr = requestTypeToStr(requestType);
@@ -342,9 +358,6 @@ void exchangeMessages(asio::ip::tcp::socket& sock, ERequest requestType)
 	{
 		std::cerr << "Failed to send length of the " << reqTypeStr << " request to the server\n";
 	}
-#else
-	std::string reqTypeStr = requestTypeToStr(requestType);
-#endif
 	
 	// Send the request itself.
 
