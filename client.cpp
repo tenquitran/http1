@@ -235,16 +235,25 @@ void displayUsage(const char* programName)
 	// --reload=XX        - every XX seconds reload the file where the Request is stored
 	// --request=/path/to/Request.json  - path to Request.html used by client to send to the Server
 
-	std::cout << "Usage:\n"
+	std::cout << "Usage (variant 1, sending keep-alive HEAD requests):\n\n"
 			  << programName 
 			  << " --host=<ip_address> --port=<port_number> "
-			     "--keep-alive=<seconds> --post-request=<seconds> "
+			     "--keep-alive=<seconds>\n"
+
+			  << "\nUsage (variant 2, sending POST requests from the specified file):\n\n"
+			  << programName
+			  << " --host=<ip_address> --port=<port_number> "
+			     "--post-request=<seconds> "
 			     "--reload=<seconds> --request=/path/to/Request.json\n"
-			  << "\nExample:\n"
+			  
+			  << "\nExample 1:\n\n"
+	          << programName 
+	          << " --host=127.0.0.1 --port=8976 --keep-alive=7\n\n" 
+	          
+	          << "\nExample 2:\n\n"
 	          << programName 
 	          << " --host=127.0.0.1 --port=8976 "
-	             "--keep-alive=7 --post-request=5 "
-	             "--request=requests/post_request.json --reload=5" 
+	             "--post-request=5 --request=requests/post_request.json --reload=5"
 	          << std::endl;
 }
 
