@@ -12,18 +12,12 @@ using namespace boost;
 
 ///////////////////////////////////////////////////////////////////////
 
-
 struct PostTimerArgs
 {
 	PostTimerArgs()
 		: m_delaySeconds(5)
 	{
 		m_exitThread.store(false);
-	}
-	
-	void setDelaySeconds(int val)
-	{
-		m_delaySeconds = val;
 	}
 
 	std::atomic<bool> m_exitThread;
@@ -35,7 +29,25 @@ struct PostTimerArgs
 	std::string m_request;
 	
 	std::string m_requestFilePath;
+	
+	std::weak_ptr<asio::ip::tcp::socket> m_spSocket;
 } postTimerArgs;
+
+
+struct KeepAliveArgs
+{
+	KeepAliveArgs()
+		: m_delaySeconds(7)
+	{
+		m_exitThread.store(false);
+	}
+
+	std::atomic<bool> m_exitThread;
+	
+	int m_delaySeconds = {};
+	
+	std::weak_ptr<asio::ip::tcp::socket> m_spSocket;
+} keepAliveArgs;
 
 
 struct CmdLineArguments
@@ -45,6 +57,8 @@ struct CmdLineArguments
 	unsigned short m_port = {};
 	
 	std::string m_requestFilePath;
+	
+	int m_keepAliveSeconds = {};
 	
 	int m_reloadSeconds = {};
 };
@@ -64,6 +78,8 @@ void *tpPostTimer(void *arg);
 std::string getHeadRequest();
 
 std::string getPostRequest();
+
+std::string getHeadRequestKeepAlive();
 
 void loadPostRequest(const std::string& filePath);
 
@@ -93,19 +109,12 @@ int main(int argc, char* argv[])
     
     postTimerArgs.m_requestFilePath = args.m_requestFilePath;
 
-    postTimerArgs.setDelaySeconds(args.m_reloadSeconds);
+    postTimerArgs.m_delaySeconds = args.m_reloadSeconds;
+    
+    keepAliveArgs.m_delaySeconds = args.m_keepAliveSeconds;
 
 	try
 	{
-		pthread_t tidPost;
-		int resPost = pthread_create(&tidPost, nullptr, &tpPostTimer, (void *)&postTimerArgs);
-		
-		if (0 != resPost)
-		{
-			std::cerr << "Failed to create POST timer thread: " << resPost << '\n';
-			return 2;
-		}
-
 		asio::ip::tcp protocol = asio::ip::tcp::v4();
 		
 		asio::ip::tcp::endpoint ep(
@@ -114,20 +123,42 @@ int main(int argc, char* argv[])
 		
 		asio::io_service io;
 		
-		asio::ip::tcp::socket sock(io, ep.protocol());
+		std::shared_ptr<asio::ip::tcp::socket> sock = 
+			std::make_shared<asio::ip::tcp::socket>(io, ep.protocol());
 		
 		std::cout << "Trying to connect to " << args.m_ipAddress 
 		          << ":" << args.m_port << std::endl;
 		
-		sock.connect(ep);
+		sock->connect(ep);
+		
+		postTimerArgs.m_spSocket = sock;
+		keepAliveArgs.m_spSocket = sock;
+		
+		pthread_t tidPost;
+		int res = pthread_create(&tidPost, nullptr, &tpPostTimer, (void *)&postTimerArgs);
+		
+		if (0 != res)
+		{
+			std::cerr << "Failed to create POST timer thread: " << res << '\n';
+			return 2;
+		}
+		
+		pthread_t tidKeepAlive;
+		res = pthread_create(&tidKeepAlive, nullptr, &tpKeepAliveTimer, (void *)&keepAliveArgs);
+		
+		if (0 != res)
+		{
+			std::cerr << "Failed to create keep-alive thread: " << res << '\n';
+			return 2;
+		}
 
 		while (false == postTimerArgs.m_exitThread.load())
 		{
-			exchangeMessages(sock, ERequest::Head);
+			//exchangeMessages(sock, ERequest::Head);
 			
-			sleep(2);
+			sleep(1);
 
-			exchangeMessages(sock, ERequest::Post);
+			//exchangeMessages(sock, ERequest::Post);
 		}
 
 #if 0
@@ -140,25 +171,45 @@ int main(int argc, char* argv[])
 
 		void *postExit;
 		
-		resPost = pthread_join(tidPost, &postExit);
+		res = pthread_join(tidPost, &postExit);
 		
-		if (0 != resPost)
+		if (0 != res)
 		{
-			std::cerr << "Failed to join POST timer thread: " << resPost << '\n';
+			std::cerr << "Failed to join the POST timer thread: " << res << '\n';
+			
+			sock->shutdown(boost::asio::ip::tcp::socket::shutdown_both);
+			sock->close();
+			
 			return 3;
 		}
 		
 		std::cout << "POST timer thread returned " << (long)postExit << std::endl;
 		
-		sock.shutdown(boost::asio::ip::tcp::socket::shutdown_both);
+		void *keepAliveExit;
 		
-		sock.close();
+		res = pthread_join(tidKeepAlive, &keepAliveExit);
+		
+		if (0 != res)
+		{
+			std::cerr << "Failed to join the keep-alive thread: " << res << '\n';
+			
+			sock->shutdown(boost::asio::ip::tcp::socket::shutdown_both);
+			sock->close();
+		
+			return 4;
+		}
+		
+		std::cout << "Keep-alive timer thread returned " << (long)keepAliveExit << std::endl;
+
+		sock->shutdown(boost::asio::ip::tcp::socket::shutdown_both);
+		
+		sock->close();
     }
 	catch (system::system_error& ex)
 	{
 		std::cerr << "Exception: " << ex.what() << '\n';
 		//std::cerr << "Exception: " << ex.what() << " (" << ex.code() << ")\n";
-		return 4;
+		return 5;
 	}
 
     return 0;
@@ -168,22 +219,27 @@ void sigHandler(int arg)
 {
 	// Notify the POST timer thread to exit.
 	postTimerArgs.m_exitThread.store(true);
+	
+	// Notify the keep-alive thread to exit.
+	keepAliveArgs.m_exitThread.store(true);
 }
 
 void displayUsage(const char* programName)
 {
 	// --host=hostname   - the host of HTTP server
 	// --port=portnumber - the port of HTTP server
+	// --keep-alive=XX   - run HTTP client with keep-alive HEAD requests every XX seconds
 	// --reload=XX       - every XX seconds reload the file where the Request is stored
-	// --request=/path/to/Request.json
+	// --request=/path/to/Request.json  - path to Request.html used by client to send to the Server
 
 	std::cout << "Usage:\n"
 			  << programName 
 			  << " --host=<ip_address> --port=<port_number> "
-			     "--request=/path/to/Request.json --reload=<seconds>\n"
+			     "--request=/path/to/Request.json --keep-alive=<seconds> --reload=<seconds>\n"
 			  << "\nExample:\n"
 	          << programName 
-	          << " --host=127.0.0.1 --port=8976 --request=requests/post_request.json --reload=5" 
+	          << " --host=127.0.0.1 --port=8976 --request=requests/post_request.json "
+	             "--keep-alive=7 --reload=5" 
 	          << std::endl;
 }
 
@@ -200,6 +256,7 @@ bool parseCmdLineArgs(int argc, char* argv[], CmdLineArguments& args)
       ("host",    value<std::string>()->default_value("127.0.0.1"), "HostName")
       ("port",    value<int>()->default_value(8976),                "Port")
       ("request", value<std::string>()->default_value(""),          "RequestPath")
+      ("keep-alive",  value<int>()->default_value(7),               "KeepAlive")
       ("reload",  value<int>()->default_value(5),                   "Reload");
       
     variables_map vm;
@@ -239,6 +296,14 @@ bool parseCmdLineArgs(int argc, char* argv[], CmdLineArguments& args)
 	}
 	else
 		{return false;}
+
+	if (vm.count("keep-alive"))
+	{
+		std::cout << "Keep-alive: " << vm["keep-alive"].as<int>() << std::endl;
+		args.m_keepAliveSeconds = vm["keep-alive"].as<int>();
+	}
+	else
+		{return false;}
 	
 	if (vm.count("reload"))
 	{
@@ -258,12 +323,41 @@ void *tpPostTimer(void *arg)
 
 	while (!pArg->m_exitThread)
 	{
-		sleep(pArg->m_delaySeconds);
-		
 		loadPostRequest(pArg->m_requestFilePath);
+		
+		std::shared_ptr<asio::ip::tcp::socket> spSock = pArg->m_spSocket.lock();
+		
+		if (spSock)
+		{
+			exchangeMessages(*spSock, ERequest::Post);
+		}
+		
+		sleep(pArg->m_delaySeconds);
 	}
 	
 	std::cout << "POST timer thread exit" << std::endl;
+	
+	return 0;
+}
+
+// Thread procedure to send keep-alive HEAD requests.
+void *tpKeepAliveTimer(void *arg)
+{
+	KeepAliveArgs *pArg = (KeepAliveArgs *)arg;
+
+	while (!pArg->m_exitThread)
+	{
+		std::shared_ptr<asio::ip::tcp::socket> spSock = pArg->m_spSocket.lock();
+
+		if (spSock)
+		{
+			exchangeMessages(*spSock, ERequest::Head);
+		}
+		
+		sleep(pArg->m_delaySeconds);
+	}
+	
+	std::cout << "Keep-alive thread exit" << std::endl;
 	
 	return 0;
 }
@@ -279,6 +373,14 @@ std::string getHeadRequest()
            "Accept: text/html\r\n"
            "Host: somehost.com\r\n\r\n";
 #endif
+}
+
+std::string getHeadRequestKeepAlive()
+{
+	return "HEAD /index.html HTTP/1.1\r\n"
+           "Accept: text/html\r\n"
+           "Keep-Alive: timeout=5, max=1000\r\n"
+           "Host: somehost.com\r\n\r\n";
 }
 
 std::string getPostRequest()
@@ -350,13 +452,15 @@ void loadPostRequest(const std::string& filePath)
 }
 
 void exchangeMessages(asio::ip::tcp::socket& sock, ERequest requestType)
+//void exchangeMessages(std::shared_ptr<asio::ip::tcp::socket>& spSock, ERequest requestType)
 {
 	std::string request;
 	
 	switch (requestType)
 	{
 		case ERequest::Head:
-			request = getHeadRequest();
+			//request = getHeadRequest();
+			request = getHeadRequestKeepAlive();
 			break;
 		case ERequest::Post:
 			request = getPostRequest();
