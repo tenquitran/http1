@@ -13,9 +13,9 @@ using namespace boost;
 ///////////////////////////////////////////////////////////////////////
 
 
-struct TpPostTimerArgs
+struct PostTimerArgs
 {
-	TpPostTimerArgs()
+	PostTimerArgs()
 		: m_delaySeconds(5)
 	{
 		m_exitThread.store(false);
@@ -232,7 +232,7 @@ bool parseCmdLineArgs(int argc, char* argv[], CmdLineArguments& args)
 // Thread procedure to reload the POST request from file.
 void *tpPostTimer(void *arg)
 {
-	TpPostTimerArgs *pArg = (TpPostTimerArgs *)arg;
+	PostTimerArgs *pArg = (PostTimerArgs *)arg;
 
 	while (!pArg->m_exitThread)
 	{
