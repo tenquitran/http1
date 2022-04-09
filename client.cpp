@@ -60,6 +60,8 @@ struct CmdLineArguments
 	
 	int m_keepAliveSeconds = {};
 	
+	int m_postSeconds = {};
+	
 	int m_reloadSeconds = {};
 };
 
@@ -226,20 +228,23 @@ void sigHandler(int arg)
 
 void displayUsage(const char* programName)
 {
-	// --host=hostname   - the host of HTTP server
-	// --port=portnumber - the port of HTTP server
-	// --keep-alive=XX   - run HTTP client with keep-alive HEAD requests every XX seconds
-	// --reload=XX       - every XX seconds reload the file where the Request is stored
+	// --host=hostname    - the host of HTTP server
+	// --port=portnumber  - the port of HTTP server
+	// --keep-alive=XX    - run HTTP client with keep-alive HEAD requests every XX seconds
+	// --post-request=XX  - send HTTP POST request every XX seconds
+	// --reload=XX        - every XX seconds reload the file where the Request is stored
 	// --request=/path/to/Request.json  - path to Request.html used by client to send to the Server
 
 	std::cout << "Usage:\n"
 			  << programName 
 			  << " --host=<ip_address> --port=<port_number> "
-			     "--request=/path/to/Request.json --keep-alive=<seconds> --reload=<seconds>\n"
+			     "--keep-alive=<seconds> --post-request=<seconds> "
+			     "--reload=<seconds> --request=/path/to/Request.json\n"
 			  << "\nExample:\n"
 	          << programName 
-	          << " --host=127.0.0.1 --port=8976 --request=requests/post_request.json "
-	             "--keep-alive=7 --reload=5" 
+	          << " --host=127.0.0.1 --port=8976 "
+	             "--keep-alive=7 --post-request=5 "
+	             "--request=requests/post_request.json --reload=5" 
 	          << std::endl;
 }
 
@@ -253,11 +258,12 @@ bool parseCmdLineArgs(int argc, char* argv[], CmdLineArguments& args)
     options_description desc{"CommandLineOptions"};
     
     desc.add_options()
-      ("host",    value<std::string>()->default_value("127.0.0.1"), "HostName")
-      ("port",    value<int>()->default_value(8976),                "Port")
-      ("request", value<std::string>()->default_value(""),          "RequestPath")
-      ("keep-alive",  value<int>()->default_value(7),               "KeepAlive")
-      ("reload",  value<int>()->default_value(5),                   "Reload");
+      ("host",         value<std::string>()->default_value("127.0.0.1"), "HostName")
+      ("port",         value<int>()->default_value(8976),                "Port")
+      ("keep-alive",   value<int>()->default_value(7),                   "KeepAlive")
+      ("post-request", value<int>()->default_value(5),                   "PostRequest")
+      ("reload",       value<int>()->default_value(6),                   "Reload")
+      ("request",      value<std::string>()->default_value(""),          "RequestPath");
       
     variables_map vm;
     
@@ -269,7 +275,6 @@ bool parseCmdLineArgs(int argc, char* argv[], CmdLineArguments& args)
 	catch(const std::exception& ex)
 	{
     	std::cerr << ex.what() << std::endl;
-    	// TODO: display usage info
     	return false;
   	}
 
@@ -288,15 +293,7 @@ bool parseCmdLineArgs(int argc, char* argv[], CmdLineArguments& args)
 	}
 	else
 		{return false;}
-
-	if (vm.count("request"))
-	{
-		std::cout << "Request path: " << vm["request"].as<std::string>() << std::endl;
-		args.m_requestFilePath = vm["request"].as<std::string>();
-	}
-	else
-		{return false;}
-
+		
 	if (vm.count("keep-alive"))
 	{
 		std::cout << "Keep-alive: " << vm["keep-alive"].as<int>() << std::endl;
@@ -304,11 +301,27 @@ bool parseCmdLineArgs(int argc, char* argv[], CmdLineArguments& args)
 	}
 	else
 		{return false;}
-	
+
+	if (vm.count("post-request"))
+	{
+		std::cout << "Post-request: " << vm["post-request"].as<int>() << std::endl;
+		args.m_postSeconds = vm["post-request"].as<int>();
+	}
+	else
+		{return false;}
+		
 	if (vm.count("reload"))
 	{
 		std::cout << "Reload: " << vm["reload"].as<int>() << std::endl;
 		args.m_reloadSeconds = vm["reload"].as<int>();
+	}
+	else
+		{return false;}
+
+	if (vm.count("request"))
+	{
+		std::cout << "Request path: " << vm["request"].as<std::string>() << std::endl;
+		args.m_requestFilePath = vm["request"].as<std::string>();
 	}
 	else
 		{return false;}
@@ -329,7 +342,7 @@ void *tpPostTimer(void *arg)
 		
 		if (spSock)
 		{
-			exchangeMessages(*spSock, ERequest::Post);
+			//exchangeMessages(*spSock, ERequest::Post);
 		}
 		
 		sleep(pArg->m_delaySeconds);
