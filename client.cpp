@@ -55,6 +55,9 @@ void displayUsage(const char* programName);
 
 bool parseCmdLineArgs(int argc, char* argv[], CmdLineArguments& args);
 
+// Thread procedure to send keep-alive HEAD requests.
+void *tpKeepAliveTimer(void *arg);
+
 // Thread procedure to reload the POST request from file.
 void *tpPostTimer(void *arg);
 
@@ -66,12 +69,16 @@ void loadPostRequest(const std::string& filePath);
 
 void exchangeMessages(asio::ip::tcp::socket& sock, ERequest requestType);
 
+void sigHandler(int arg);
+
 ///////////////////////////////////////////////////////////////////////
 
 
 int main(int argc, char* argv[])
 {
     // Server port is 8976
+    
+    signal(SIGINT, sigHandler);
 
     CmdLineArguments args;
 
@@ -90,12 +97,12 @@ int main(int argc, char* argv[])
 
 	try
 	{
-		pthread_t tid1;
-		int t1 = pthread_create(&tid1, nullptr, &tpPostTimer, (void *)&postTimerArgs);
+		pthread_t tidPost;
+		int resPost = pthread_create(&tidPost, nullptr, &tpPostTimer, (void *)&postTimerArgs);
 		
-		if (0 != t1)
+		if (0 != resPost)
 		{
-			std::cerr << "Failed to create POST timer thread: " << t1 << '\n';
+			std::cerr << "Failed to create POST timer thread: " << resPost << '\n';
 			return 2;
 		}
 
@@ -114,29 +121,38 @@ int main(int argc, char* argv[])
 		
 		sock.connect(ep);
 
-		exchangeMessages(sock, ERequest::Head);
+		while (false == postTimerArgs.m_exitThread.load())
+		{
+			exchangeMessages(sock, ERequest::Head);
+			
+			sleep(2);
 
-		exchangeMessages(sock, ERequest::Post);
+			exchangeMessages(sock, ERequest::Post);
+		}
+
+#if 0
+		// Notify the POST timer thread to exit and wait for its exit.
+		
+		postTimerArgs.m_exitThread.store(true);
+#endif
+
+		// Wait for the worker threads to exit.
+
+		void *postExit;
+		
+		resPost = pthread_join(tidPost, &postExit);
+		
+		if (0 != resPost)
+		{
+			std::cerr << "Failed to join POST timer thread: " << resPost << '\n';
+			return 3;
+		}
+		
+		std::cout << "POST timer thread returned " << (long)postExit << std::endl;
 		
 		sock.shutdown(boost::asio::ip::tcp::socket::shutdown_both);
 		
 		sock.close();
-		
-		// Notify the POST timer thread to exit and wait for its exit.
-		
-		postTimerArgs.m_exitThread.store(true);
-
-		void *t1res;
-		
-		t1 = pthread_join(tid1, &t1res);
-		
-		if (0 != t1)
-		{
-			std::cerr << "Failed to join POST timer thread: " << t1 << '\n';
-			return 3;
-		}
-		
-		std::cout << "POST timer thread returned " << (long)t1res << std::endl;
     }
 	catch (system::system_error& ex)
 	{
@@ -146,6 +162,12 @@ int main(int argc, char* argv[])
 	}
 
     return 0;
+}
+
+void sigHandler(int arg)
+{
+	// Notify the POST timer thread to exit.
+	postTimerArgs.m_exitThread.store(true);
 }
 
 void displayUsage(const char* programName)

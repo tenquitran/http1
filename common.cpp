@@ -119,6 +119,7 @@ std::string receiveData(asio::ip::tcp::socket& sock)
 	catch (system::system_error& ex)
 	{
 		std::cerr << "Exception on receiving: " << ex.what() << '\n';
+		return "";
 	}
 	
 	return received;

@@ -16,7 +16,7 @@ std::string getPostResponse();
 
 ERequest getMessageType(const std::string& msg);
 
-void exchangeMessages(asio::ip::tcp::socket& sock);
+bool exchangeMessages(asio::ip::tcp::socket& sock);
 
 ///////////////////////////////////////////////////////////////////////
 
@@ -42,66 +42,72 @@ int main(int argc, char* argv[])
 
 		acceptor.listen();
 		
-		// TODO: implement more graceful exit
 		std::cout << "Press Ctrl+C to stop the server" << std::endl;
 		
 		while (true)
 		{
 			asio::ip::tcp::socket sock(io);
-			
+
 			acceptor.accept(sock);
-			
+
 			std::string clientIp = sock.remote_endpoint().address().to_string();
 			
 			unsigned short clientPort = sock.remote_endpoint().port();
 			
 			std::cout << "Accepted client connection: " << clientIp << ":" << clientPort << std::endl;
-			
-			exchangeMessages(sock);
-			
-			exchangeMessages(sock);
 
+			while (true)
+			{
+				if (!exchangeMessages(sock))
+				{
+					break;
+				}
+			}
+			
+			std::cout << "Client " << clientIp << " closed the connection" << std::endl;
+			
 			sock.shutdown(boost::asio::ip::tcp::socket::shutdown_both);
-		
+			
 			sock.close();
 		}
 	}
 	catch (system::system_error& ex)
 	{
 		std::cerr << "Exception: " << ex.what() << '\n';
-		//std::cerr << "Exception: " << ex.what() << " (" << ex.code() << ")\n";
 		return 1;
 	}
 	
     return 0;
 }
 
-void exchangeMessages(asio::ip::tcp::socket& sock)
+bool exchangeMessages(asio::ip::tcp::socket& sock)
 {
 	std::string fromClient = receiveData(sock);
 
 	if (fromClient.length() < 1)
 	{
 		std::cerr << "Failed to receive data from the client\n";
-		return;
+		return false;
 	}
 	
 	ERequest requestType = getMessageType(fromClient);
 
 	std::cout << "Received a " << requestTypeToStr(requestType) 
-	          << " request from the client" << std::endl;
+		      << " request from the client" << std::endl;
 	
 	if (ERequest::Undefined == requestType)
 	{
-		// TODO: respond to the client with an error message
 		std::cerr << "Invalid request type\n";
-		return;
+		return false;
 	}
 
 	if (!respond(sock, requestType))
 	{
 		std::cerr << "Failed to respond to the client\n";
+		return false;
 	}
+	
+	return true;
 }
 
 bool respond(asio::ip::tcp::socket& sock, ERequest requestType)
@@ -117,7 +123,6 @@ bool respond(asio::ip::tcp::socket& sock, ERequest requestType)
 			response = getPostResponse();
 			break;
 		default:
-			// TODO: send error response to the client
 			std::cerr << __FUNCTION__ << ": unsupported request type\n";
 			return false;
 	}
