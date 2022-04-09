@@ -12,9 +12,9 @@ using namespace boost;
 
 ///////////////////////////////////////////////////////////////////////
 
-struct PostTimerArgs
+struct ReloadPostArgs
 {
-	PostTimerArgs()
+	ReloadPostArgs()
 		: m_delaySeconds(5)
 	{
 		m_exitThread.store(false);
@@ -29,9 +29,23 @@ struct PostTimerArgs
 	std::string m_request;
 	
 	std::string m_requestFilePath;
-	
+} reloadPostArgs;
+
+
+struct SendPostArgs
+{
+	SendPostArgs()
+		: m_delaySeconds(5)
+	{
+		m_exitThread.store(false);
+	}
+
+	std::atomic<bool> m_exitThread;
+
+	int m_delaySeconds = {};
+
 	std::weak_ptr<asio::ip::tcp::socket> m_spSocket;
-} postTimerArgs;
+} sendPostArgs;
 
 
 struct KeepAliveArgs
@@ -79,7 +93,10 @@ bool parseCmdLineArgs(int argc, char* argv[], CmdLineArguments& args);
 void *tpKeepAliveTimer(void *arg);
 
 // Thread procedure to reload the POST request from file.
-void *tpPostTimer(void *arg);
+void *tpReloadPost(void *arg);
+
+// Thread procedure to send the POST request.
+void *tpSendPost(void *arg);
 
 std::string getHeadRequest();
 
@@ -113,9 +130,11 @@ int main(int argc, char* argv[])
     // Initial loading of the POST request.
     loadPostRequest(args.m_requestFilePath);
     
-    postTimerArgs.m_requestFilePath = args.m_requestFilePath;
+    reloadPostArgs.m_requestFilePath = args.m_requestFilePath;
 
-    postTimerArgs.m_delaySeconds = args.m_reloadSeconds;
+    reloadPostArgs.m_delaySeconds = args.m_reloadSeconds;
+    
+    sendPostArgs.m_delaySeconds = args.m_postSeconds;
     
     keepAliveArgs.m_delaySeconds = args.m_keepAliveSeconds;
 
@@ -137,11 +156,12 @@ int main(int argc, char* argv[])
 		
 		sock->connect(ep);
 		
-		postTimerArgs.m_spSocket = sock;
+		sendPostArgs.m_spSocket  = sock;
 		keepAliveArgs.m_spSocket = sock;
 		
 		pthread_t tidKeepAlive;
-		pthread_t tidPost;
+		pthread_t tidPostReloader;
+		pthread_t tidPostSender;
 		
 		if (args.m_keepAliveMode)
 		{
@@ -157,15 +177,25 @@ int main(int argc, char* argv[])
 		}
 		else
 		{
-			int res = pthread_create(&tidPost, nullptr, &tpPostTimer, (void *)&postTimerArgs);
+			int res = pthread_create(&tidPostReloader, nullptr, &tpReloadPost, (void *)&reloadPostArgs);
 			
 			if (0 != res)
 			{
-				std::cerr << "Failed to create POST timer thread: " << res << '\n';
+				std::cerr << "Failed to create POST reloader thread: " << res << '\n';
 				return 2;
 			}
 			
-			std::cout << "Started the POST timer thread" << std::endl;
+			std::cout << "Started the POST reloader thread" << std::endl;
+			
+			res = pthread_create(&tidPostSender, nullptr, &tpSendPost, (void *)&sendPostArgs);
+			
+			if (0 != res)
+			{
+				std::cerr << "Failed to create POST sender thread: " << res << '\n';
+				return 2;
+			}
+			
+			std::cout << "Started the POST sender thread" << std::endl;
 		}
 
 		if (args.m_keepAliveMode)
@@ -177,7 +207,7 @@ int main(int argc, char* argv[])
 		}
 		else
 		{
-			while (false == postTimerArgs.m_exitThread.load())
+			while (false == reloadPostArgs.m_exitThread.load())
 			{
 				sleep(1);
 			}
@@ -205,13 +235,13 @@ int main(int argc, char* argv[])
 		}
 		else
 		{
-			void *postExit;
+			void *postReloaderExit;
 			
-			int res = pthread_join(tidPost, &postExit);
+			int res = pthread_join(tidPostReloader, &postReloaderExit);
 			
 			if (0 != res)
 			{
-				std::cerr << "Failed to join the POST timer thread: " << res << '\n';
+				std::cerr << "Failed to join the POST reloader thread: " << res << '\n';
 				
 				sock->shutdown(boost::asio::ip::tcp::socket::shutdown_both);
 				sock->close();
@@ -219,7 +249,23 @@ int main(int argc, char* argv[])
 				return 3;
 			}
 			
-			std::cout << "POST timer thread returned " << (long)postExit << std::endl;
+			std::cout << "POST reloader thread returned " << (long)postReloaderExit << std::endl;
+
+			void *postSenderExit;
+			
+			res = pthread_join(tidPostSender, &postSenderExit);
+			
+			if (0 != res)
+			{
+				std::cerr << "Failed to join the POST sender thread: " << res << '\n';
+				
+				sock->shutdown(boost::asio::ip::tcp::socket::shutdown_both);
+				sock->close();
+				
+				return 3;
+			}
+			
+			std::cout << "POST sender thread returned " << (long)postSenderExit << std::endl;
 		}
 
 		sock->shutdown(boost::asio::ip::tcp::socket::shutdown_both);
@@ -237,8 +283,11 @@ int main(int argc, char* argv[])
 
 void sigHandler(int arg)
 {
-	// Notify the POST timer thread to exit.
-	postTimerArgs.m_exitThread.store(true);
+	// Notify the POST reloader thread to exit.
+	reloadPostArgs.m_exitThread.store(true);
+	
+	// Notify the POST sender thread to exit.
+	sendPostArgs.m_exitThread.store(true);
 	
 	// Notify the keep-alive thread to exit.
 	keepAliveArgs.m_exitThread.store(true);
@@ -372,14 +421,29 @@ bool parseCmdLineArgs(int argc, char* argv[], CmdLineArguments& args)
 }
 
 // Thread procedure to reload the POST request from file.
-void *tpPostTimer(void *arg)
+void *tpReloadPost(void *arg)
 {
-	PostTimerArgs *pArg = (PostTimerArgs *)arg;
+	ReloadPostArgs *pArg = (ReloadPostArgs *)arg;
 
 	while (!pArg->m_exitThread)
 	{
 		loadPostRequest(pArg->m_requestFilePath);
-		
+
+		sleep(pArg->m_delaySeconds);
+	}
+	
+	std::cout << "POST reload thread exit" << std::endl;
+	
+	return 0;
+}
+
+// Thread procedure to send the POST request.
+void *tpSendPost(void *arg)
+{
+	SendPostArgs *pArg = (SendPostArgs *)arg;
+
+	while (!pArg->m_exitThread)
+	{
 		std::shared_ptr<asio::ip::tcp::socket> spSock = pArg->m_spSocket.lock();
 		
 		if (spSock)
@@ -390,8 +454,8 @@ void *tpPostTimer(void *arg)
 		sleep(pArg->m_delaySeconds);
 	}
 	
-	std::cout << "POST timer thread exit" << std::endl;
-	
+	std::cout << "POST sender thread exit" << std::endl;
+
 	return 0;
 }
 
@@ -444,9 +508,9 @@ std::string getPostRequest()
 
 	try
 	{
-		std::lock_guard<std::mutex> lock(postTimerArgs.m_requestLock);
+		std::lock_guard<std::mutex> lock(reloadPostArgs.m_requestLock);
 		
-		request = postTimerArgs.m_request;
+		request = reloadPostArgs.m_request;
 	}
 	catch (std::logic_error&)
 	{
@@ -495,10 +559,10 @@ void loadPostRequest(const std::string& filePath)
 
 	try
 	{
-		std::lock_guard<std::mutex> lock(postTimerArgs.m_requestLock);
+		std::lock_guard<std::mutex> lock(reloadPostArgs.m_requestLock);
 	
-		//postTimerArgs.m_request = buffer.str();
-		postTimerArgs.m_request = request;
+		//reloadPostArgs.m_request = buffer.str();
+		reloadPostArgs.m_request = request;
 	}
 	catch (std::logic_error&)
 	{

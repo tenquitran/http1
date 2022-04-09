@@ -1,5 +1,6 @@
 #include <iostream>
 #include <boost/asio.hpp>
+#include <boost/program_options.hpp>
 #include "common.h"
 
 ///////////////////////////////////////////////////////////////////////
@@ -7,6 +8,21 @@
 using namespace boost;
 
 ///////////////////////////////////////////////////////////////////////
+
+struct CmdLineArguments
+{
+	unsigned short m_port = {};
+	
+	int m_reloadSeconds = {};
+	
+	std::string m_responseFilePath;
+};
+
+///////////////////////////////////////////////////////////////////////
+
+void displayUsage(const char* programName);
+
+bool parseCmdLineArgs(int argc, char* argv[], CmdLineArguments& args);
 
 bool respond(asio::ip::tcp::socket& sock, ERequest requestType);
 
@@ -23,8 +39,15 @@ bool exchangeMessages(asio::ip::tcp::socket& sock);
 
 int main(int argc, char* argv[])
 {
-	// TODO: hard-coded
-    const unsigned short port = 8976;
+    CmdLineArguments args;
+
+    if (!parseCmdLineArgs(argc, argv, args))
+    {
+    	displayUsage(argv[0]);
+    	return 1;
+    }
+    
+    // TODO: reload and response options
     
     ERequest requestType = ERequest::Undefined;
 
@@ -34,7 +57,7 @@ int main(int argc, char* argv[])
 		
 		asio::ip::address serverIp = asio::ip::address_v4::any();
 
-		asio::ip::tcp::endpoint ep = asio::ip::tcp::endpoint(serverIp, port);
+		asio::ip::tcp::endpoint ep = asio::ip::tcp::endpoint(serverIp, args.m_port);
 		
 		asio::io_service io;
 		
@@ -74,10 +97,82 @@ int main(int argc, char* argv[])
 	catch (system::system_error& ex)
 	{
 		std::cerr << "Exception: " << ex.what() << '\n';
-		return 1;
+		return 2;
 	}
 	
     return 0;
+}
+
+void displayUsage(const char* programName)
+{
+	// --port=portnumber - the number of listener port
+	// --reload=XX - every XX seconds reload the file where the HTTP Response is stored and use it when process next HTTP Requests
+	// --response=/path/to/Response.json - path to Response.html used by server when receive Response from client.
+
+	std::cout << "Usage:\n\n"
+			  << programName 
+			  << " --port=<port_number> --reload=<seconds> "
+			     "--response=/path/to/Response.json\n"
+
+			  << "\nExample:\n\n"
+	          << programName 
+	          << " --port=8976 --reload=5 "
+	             "--response=responses/post_response.json"
+	          << std::endl;
+}
+
+bool parseCmdLineArgs(int argc, char* argv[], CmdLineArguments& args)
+{
+	using namespace boost::program_options;
+
+	if (argc < 4)
+		{return false;}
+
+    options_description desc{"CommandLineOptions"};
+    
+    desc.add_options()
+      ("port",     value<int>()->default_value(8976),       "Port")
+      ("reload",   value<int>()->default_value(5),          "Reload")
+      ("response", value<std::string>()->default_value(""), "ResponsePath");
+      
+    variables_map vm;
+    
+	try
+	{
+		store(parse_command_line(argc, argv, desc), vm);
+		notify(vm);
+	}
+	catch(const std::exception& ex)
+	{
+    	std::cerr << ex.what() << std::endl;
+    	return false;
+  	}
+
+	if (vm.count("port"))
+	{
+		std::cout << "Port: " << vm["port"].as<int>() << std::endl;
+		args.m_port = vm["port"].as<int>();
+	}
+	else
+		{return false;}
+
+	if (vm.count("reload"))
+	{
+		std::cout << "Reload: " << vm["reload"].as<int>() << std::endl;
+		args.m_reloadSeconds = vm["reload"].as<int>();
+	}
+	else
+		{return false;}
+
+	if (vm.count("response"))
+	{
+		std::cout << "Response path: " << vm["response"].as<std::string>() << std::endl;
+		args.m_responseFilePath = vm["response"].as<std::string>();
+	}
+	else
+		{return false;}
+
+	return true;
 }
 
 bool exchangeMessages(asio::ip::tcp::socket& sock)
