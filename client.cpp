@@ -60,6 +60,10 @@ struct CmdLineArguments
 	
 	int m_keepAliveSeconds = {};
 	
+	// true if the client will send only HEAD keep-alive requests, 
+	// false if it will send only POST requests.
+	bool m_keepAliveMode = {false};
+	
 	int m_postSeconds = {};
 	
 	int m_reloadSeconds = {};
@@ -136,72 +140,87 @@ int main(int argc, char* argv[])
 		postTimerArgs.m_spSocket = sock;
 		keepAliveArgs.m_spSocket = sock;
 		
-		pthread_t tidPost;
-		int res = pthread_create(&tidPost, nullptr, &tpPostTimer, (void *)&postTimerArgs);
-		
-		if (0 != res)
-		{
-			std::cerr << "Failed to create POST timer thread: " << res << '\n';
-			return 2;
-		}
-		
 		pthread_t tidKeepAlive;
-		res = pthread_create(&tidKeepAlive, nullptr, &tpKeepAliveTimer, (void *)&keepAliveArgs);
+		pthread_t tidPost;
 		
-		if (0 != res)
+		if (args.m_keepAliveMode)
 		{
-			std::cerr << "Failed to create keep-alive thread: " << res << '\n';
-			return 2;
-		}
-
-		while (false == postTimerArgs.m_exitThread.load())
-		{
-			//exchangeMessages(sock, ERequest::Head);
+			int res = pthread_create(&tidKeepAlive, nullptr, &tpKeepAliveTimer, (void *)&keepAliveArgs);
 			
-			sleep(1);
-
-			//exchangeMessages(sock, ERequest::Post);
+			if (0 != res)
+			{
+				std::cerr << "Failed to create keep-alive thread: " << res << '\n';
+				return 2;
+			}
+			
+			std::cout << "Started the keep-alive thread" << std::endl;
+		}
+		else
+		{
+			int res = pthread_create(&tidPost, nullptr, &tpPostTimer, (void *)&postTimerArgs);
+			
+			if (0 != res)
+			{
+				std::cerr << "Failed to create POST timer thread: " << res << '\n';
+				return 2;
+			}
+			
+			std::cout << "Started the POST timer thread" << std::endl;
 		}
 
-#if 0
-		// Notify the POST timer thread to exit and wait for its exit.
-		
-		postTimerArgs.m_exitThread.store(true);
-#endif
+		if (args.m_keepAliveMode)
+		{
+			while (false == keepAliveArgs.m_exitThread.load())
+			{
+				sleep(1);
+			}
+		}
+		else
+		{
+			while (false == postTimerArgs.m_exitThread.load())
+			{
+				sleep(1);
+			}
+		}
 
 		// Wait for the worker threads to exit.
-
-		void *postExit;
 		
-		res = pthread_join(tidPost, &postExit);
-		
-		if (0 != res)
+		if (args.m_keepAliveMode)
 		{
-			std::cerr << "Failed to join the POST timer thread: " << res << '\n';
+			void *keepAliveExit;
+		
+			int res = pthread_join(tidKeepAlive, &keepAliveExit);
 			
-			sock->shutdown(boost::asio::ip::tcp::socket::shutdown_both);
-			sock->close();
+			if (0 != res)
+			{
+				std::cerr << "Failed to join the keep-alive thread: " << res << '\n';
+				
+				sock->shutdown(boost::asio::ip::tcp::socket::shutdown_both);
+				sock->close();
 			
-			return 3;
+				return 4;
+			}
+			
+			std::cout << "Keep-alive timer thread returned " << (long)keepAliveExit << std::endl;
 		}
-		
-		std::cout << "POST timer thread returned " << (long)postExit << std::endl;
-		
-		void *keepAliveExit;
-		
-		res = pthread_join(tidKeepAlive, &keepAliveExit);
-		
-		if (0 != res)
+		else
 		{
-			std::cerr << "Failed to join the keep-alive thread: " << res << '\n';
+			void *postExit;
 			
-			sock->shutdown(boost::asio::ip::tcp::socket::shutdown_both);
-			sock->close();
-		
-			return 4;
+			int res = pthread_join(tidPost, &postExit);
+			
+			if (0 != res)
+			{
+				std::cerr << "Failed to join the POST timer thread: " << res << '\n';
+				
+				sock->shutdown(boost::asio::ip::tcp::socket::shutdown_both);
+				sock->close();
+				
+				return 3;
+			}
+			
+			std::cout << "POST timer thread returned " << (long)postExit << std::endl;
 		}
-		
-		std::cout << "Keep-alive timer thread returned " << (long)keepAliveExit << std::endl;
 
 		sock->shutdown(boost::asio::ip::tcp::socket::shutdown_both);
 		
@@ -210,7 +229,6 @@ int main(int argc, char* argv[])
 	catch (system::system_error& ex)
 	{
 		std::cerr << "Exception: " << ex.what() << '\n';
-		//std::cerr << "Exception: " << ex.what() << " (" << ex.code() << ")\n";
 		return 5;
 	}
 
@@ -261,6 +279,8 @@ bool parseCmdLineArgs(int argc, char* argv[], CmdLineArguments& args)
 {
 	using namespace boost::program_options;
 	
+	// There should be at least "host" and "port" options 
+	// and either "keep-alive" or a set of POST options.
 	if (argc < 4)
 		{return false;}
 
@@ -302,38 +322,51 @@ bool parseCmdLineArgs(int argc, char* argv[], CmdLineArguments& args)
 	}
 	else
 		{return false;}
-		
-	if (vm.count("keep-alive"))
+	
+	// We are suppose that the "keep-alive" command-line option 
+	// is mutually exclusive with the set of options "post-request", "reload" and "request" -
+	// that is, that the client will send either only keep-alive HEAD requests 
+	// or only POST requests.
+	
+	if (!vm["keep-alive"].defaulted())
 	{
 		std::cout << "Keep-alive: " << vm["keep-alive"].as<int>() << std::endl;
-		args.m_keepAliveSeconds = vm["keep-alive"].as<int>();
-	}
-	else
-		{return false;}
-
-	if (vm.count("post-request"))
-	{
-		std::cout << "Post-request: " << vm["post-request"].as<int>() << std::endl;
-		args.m_postSeconds = vm["post-request"].as<int>();
-	}
-	else
-		{return false;}
 		
-	if (vm.count("reload"))
-	{
-		std::cout << "Reload: " << vm["reload"].as<int>() << std::endl;
-		args.m_reloadSeconds = vm["reload"].as<int>();
+		args.m_keepAliveSeconds = vm["keep-alive"].as<int>();
+		args.m_keepAliveMode = true;
+		
+		std::cout << "Mode: keep-alive" << std::endl;
+		
+		return true;
 	}
 	else
-		{return false;}
+	{
+		if (vm.count("post-request"))
+		{
+			std::cout << "Post-request: " << vm["post-request"].as<int>() << std::endl;
+			args.m_postSeconds = vm["post-request"].as<int>();
+		}
+		else
+			{return false;}
+			
+		if (vm.count("reload"))
+		{
+			std::cout << "Reload: " << vm["reload"].as<int>() << std::endl;
+			args.m_reloadSeconds = vm["reload"].as<int>();
+		}
+		else
+			{return false;}
 
-	if (vm.count("request"))
-	{
-		std::cout << "Request path: " << vm["request"].as<std::string>() << std::endl;
-		args.m_requestFilePath = vm["request"].as<std::string>();
+		if (vm.count("request"))
+		{
+			std::cout << "Request path: " << vm["request"].as<std::string>() << std::endl;
+			args.m_requestFilePath = vm["request"].as<std::string>();
+		}
+		else
+			{return false;}
+			
+		std::cout << "Mode: POST" << std::endl;
 	}
-	else
-		{return false;}
 
 	return true;
 }
@@ -351,7 +384,7 @@ void *tpPostTimer(void *arg)
 		
 		if (spSock)
 		{
-			//exchangeMessages(*spSock, ERequest::Post);
+			exchangeMessages(*spSock, ERequest::Post);
 		}
 		
 		sleep(pArg->m_delaySeconds);
