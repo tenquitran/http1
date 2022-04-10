@@ -281,13 +281,12 @@ int main(int argc, char* argv[])
 
 void sigHandler(int arg)
 {
-	// Notify the POST reloader thread to exit.
+	// Notify the worker threads to exit.
+	
 	reloadPostArgs.m_exitThread.store(true);
 	
-	// Notify the POST sender thread to exit.
 	sendPostArgs.m_exitThread.store(true);
 	
-	// Notify the keep-alive thread to exit.
 	keepAliveArgs.m_exitThread.store(true);
 }
 
@@ -481,15 +480,9 @@ void *tpKeepAliveTimer(void *arg)
 
 std::string getHeadRequest()
 {
-#if 1
 	return "HEAD /index.html HTTP/1.1\r\n"
            "Accept: application/json\r\n"
            "Host: somehost.com\r\n\r\n";
-#else
-	return "HEAD /index.html HTTP/1.1\r\n"
-           "Accept: text/html\r\n"
-           "Host: somehost.com\r\n\r\n";
-#endif
 }
 
 std::string getHeadRequestKeepAlive()
@@ -546,22 +539,11 @@ void loadPostRequest(const std::string& filePath)
 						  "Accept: application/json\r\n\r\n";
 	
 	request += payload + "\r\n\r\n";
-	
-#if 0
-	std::string line;
-	
-	while (std::getline(fs, line))
-	{
-		msg += line + "\r\n";
-	}
-	msg += "\r\n\r\n";
-#endif
 
 	try
 	{
 		std::lock_guard<std::mutex> lock(reloadPostArgs.m_requestLock);
-	
-		//reloadPostArgs.m_request = buffer.str();
+
 		reloadPostArgs.m_request = request;
 	}
 	catch (std::logic_error&)
@@ -571,7 +553,6 @@ void loadPostRequest(const std::string& filePath)
 }
 
 void exchangeMessages(asio::ip::tcp::socket& sock, ERequest requestType)
-//void exchangeMessages(std::shared_ptr<asio::ip::tcp::socket>& spSock, ERequest requestType)
 {
 	std::string request;
 	
