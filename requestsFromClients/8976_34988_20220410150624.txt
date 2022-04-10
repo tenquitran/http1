@@ -1,0 +1,13 @@
+POST /test HTTP/1.1
+Host: somehost.com
+Content-Type: application/json; utf-8
+Content-Length: 62
+Accept: application/json
+
+{
+	"username":"John", 
+	"surname":"Smith", 
+	"id":"12345"
+}
+
+

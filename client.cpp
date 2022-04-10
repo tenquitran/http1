@@ -115,8 +115,6 @@ void sigHandler(int arg);
 
 int main(int argc, char* argv[])
 {
-    // Server port is 8976
-    
     signal(SIGINT, sigHandler);
 
     CmdLineArguments args;
@@ -533,6 +531,8 @@ void loadPostRequest(const std::string& filePath)
 	
 	std::stringstream buffer;
 	buffer << fs.rdbuf();
+	
+	fs.close();
 	
 	std::string payload = buffer.str();
 

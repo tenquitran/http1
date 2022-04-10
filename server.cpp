@@ -1,4 +1,7 @@
 #include <iostream>
+#include <string>
+#include <fstream>
+#include <sstream>
 #include <boost/asio.hpp>
 #include <boost/program_options.hpp>
 #include "common.h"
@@ -8,6 +11,26 @@
 using namespace boost;
 
 ///////////////////////////////////////////////////////////////////////
+
+struct ReloadResponseArgs
+{
+	ReloadResponseArgs()
+		: m_delaySeconds(5)
+	{
+		m_exitThread.store(false);
+	}
+
+	std::atomic<bool> m_exitThread;
+
+	int m_delaySeconds = {};
+	
+	std::mutex m_responseLock;
+	
+	std::string m_response;
+	
+	std::string m_responseFilePath;
+} reloadResponseArgs;
+
 
 struct CmdLineArguments
 {
@@ -24,6 +47,11 @@ void displayUsage(const char* programName);
 
 bool parseCmdLineArgs(int argc, char* argv[], CmdLineArguments& args);
 
+// Thread procedure to reload the POST response from file.
+void *tpReloadResponse(void *arg);
+
+void loadPostResponse(const std::string& filePath);
+
 bool respond(asio::ip::tcp::socket& sock, ERequest requestType);
 
 std::string getHeadResponse();
@@ -32,13 +60,19 @@ std::string getPostResponse();
 
 ERequest getMessageType(const std::string& msg);
 
-bool exchangeMessages(asio::ip::tcp::socket& sock);
+bool exchangeMessages(asio::ip::tcp::socket& sock, unsigned short serverPort, unsigned short clientPort);
+
+void saveRequestToFile(const std::string& request, unsigned short serverPort, unsigned short clientPort);
+
+void sigHandler(int arg);
 
 ///////////////////////////////////////////////////////////////////////
 
 
 int main(int argc, char* argv[])
 {
+	signal(SIGINT, sigHandler);
+
     CmdLineArguments args;
 
     if (!parseCmdLineArgs(argc, argv, args))
@@ -49,10 +83,29 @@ int main(int argc, char* argv[])
     
     // TODO: reload and response options
     
+    reloadResponseArgs.m_responseFilePath = args.m_responseFilePath;
+
+    reloadResponseArgs.m_delaySeconds = args.m_reloadSeconds;
+    
+    // Initial loading of the POST response.
+    loadPostResponse(reloadResponseArgs.m_responseFilePath);
+
     ERequest requestType = ERequest::Undefined;
 
 	try
 	{
+		pthread_t tidrr;
+		
+		int res = pthread_create(&tidrr, nullptr, &tpReloadResponse, (void *)&reloadResponseArgs);
+			
+		if (0 != res)
+		{
+			std::cerr << "Failed to create POST response reloader thread: " << res << '\n';
+			return 2;
+		}
+		
+		std::cout << "Started the POST response reloader thread" << std::endl;
+	
 		asio::ip::tcp protocol = asio::ip::tcp::v4();
 		
 		asio::ip::address serverIp = asio::ip::address_v4::any();
@@ -66,12 +119,19 @@ int main(int argc, char* argv[])
 		acceptor.listen();
 		
 		std::cout << "Press Ctrl+C to stop the server" << std::endl;
-		
-		while (true)
+
+		while (false == reloadResponseArgs.m_exitThread.load())
 		{
+#if 1
 			asio::ip::tcp::socket sock(io);
+			
+			// TODO: temp
+			std::cout << "Before accept()" << std::endl;
 
 			acceptor.accept(sock);
+			
+			// TODO: temp
+			std::cout << "After accept()" << std::endl;
 
 			std::string clientIp = sock.remote_endpoint().address().to_string();
 			
@@ -81,7 +141,7 @@ int main(int argc, char* argv[])
 
 			while (true)
 			{
-				if (!exchangeMessages(sock))
+				if (!exchangeMessages(sock, args.m_port, clientPort))
 				{
 					break;
 				}
@@ -92,15 +152,46 @@ int main(int argc, char* argv[])
 			sock.shutdown(boost::asio::ip::tcp::socket::shutdown_both);
 			
 			sock.close();
+#else
+			sleep(1);
+#endif
 		}
+		
+Exit:
+		// TODO: temp
+		std::cout << "Exit label" << std::endl;
+
+		void *rrExit;
+			
+		res = pthread_join(tidrr, &rrExit);
+		
+		if (0 != res)
+		{
+			std::cerr << "Failed to join the POST response reloader thread: " << res << '\n';
+		}
+		else
+		{
+			std::cout << "POST response reloader thread returned " << (long)rrExit << std::endl;
+		}
+
+		acceptor.close();
 	}
 	catch (system::system_error& ex)
 	{
 		std::cerr << "Exception: " << ex.what() << '\n';
-		return 2;
+		return 3;
 	}
 	
     return 0;
+}
+
+void sigHandler(int arg)
+{
+	// TODO: temp
+	std::cout << "Ctrl+C" << std::endl;
+
+	// Notify the POST response reloader thread to exit.
+	reloadResponseArgs.m_exitThread.store(true);
 }
 
 void displayUsage(const char* programName)
@@ -175,7 +266,62 @@ bool parseCmdLineArgs(int argc, char* argv[], CmdLineArguments& args)
 	return true;
 }
 
-bool exchangeMessages(asio::ip::tcp::socket& sock)
+void *tpReloadResponse(void *arg)
+{
+	ReloadResponseArgs *pArg = (ReloadResponseArgs *)arg;
+
+	while (!pArg->m_exitThread)
+	{
+		loadPostResponse(pArg->m_responseFilePath);
+
+		sleep(pArg->m_delaySeconds);
+	}
+	
+	std::cout << "POST response reload thread exit" << std::endl;
+	
+	return 0;
+}
+
+void loadPostResponse(const std::string& filePath)
+{
+	std::ifstream fs(filePath);
+		
+	if (fs.fail())
+	{
+		std::cerr << "Failed to load POST response from the file "
+		          << "\"" << filePath << "\"\n";
+		return;
+	}
+	
+	std::stringstream buffer;
+	buffer << fs.rdbuf();
+	
+	fs.close();
+	
+	std::string payload = buffer.str();
+
+	// 2 bytes for "\r\n" following the payload.
+	std::string payloadLen = std::to_string(payload.length() + 2);
+
+	std::string response = "HTTP/1.1 200 OK\r\n"
+						   "Content-Length: " + payloadLen + "\r\n"
+						   "Content-Type: application/json; utf-8\r\n";
+	
+	response += payload + "\r\n\r\n";
+
+	try
+	{
+		std::lock_guard<std::mutex> lock(reloadResponseArgs.m_responseLock);
+	
+		reloadResponseArgs.m_response = response;
+	}
+	catch (std::logic_error&)
+	{
+		std::cout << "POST response reloader thread: lock_guard exception";
+	}
+}
+
+bool exchangeMessages(asio::ip::tcp::socket& sock, unsigned short serverPort, unsigned short clientPort)
 {
 	std::string fromClient = receiveData(sock);
 
@@ -184,6 +330,8 @@ bool exchangeMessages(asio::ip::tcp::socket& sock)
 		std::cerr << "Failed to receive data from the client\n";
 		return false;
 	}
+	
+	saveRequestToFile(fromClient, serverPort, clientPort);
 	
 	ERequest requestType = getMessageType(fromClient);
 
@@ -203,6 +351,51 @@ bool exchangeMessages(asio::ip::tcp::socket& sock)
 	}
 	
 	return true;
+}
+
+void saveRequestToFile(const std::string& request, unsigned short serverPort, unsigned short clientPort)
+{
+	// Output file name: <serverPort>_<clientPort>_<timestamp>.txt
+	// , where timestamp is of the format YYYYMMDDHHmmSS
+
+	std::string fileName;
+
+	time_t tm0 = time(nullptr);
+	
+	tm* ltm = localtime(&tm0);
+	
+	char buff[100];
+	
+	snprintf(buff, 100, "%04d%02d%02d%02d%02d%02d", 
+		ltm->tm_year + 1900, 
+		ltm->tm_mon + 1, 
+		ltm->tm_mday, 
+		ltm->tm_hour, 
+		ltm->tm_min, 
+		ltm->tm_sec);
+	
+	std::string tms(buff);
+
+	fileName = std::to_string(serverPort);
+	fileName += "_";
+	fileName += std::to_string(clientPort);
+	fileName += "_";
+	fileName += tms;
+	fileName += ".txt";
+	
+	std::string path = "requestsFromClients/" + fileName;
+	
+	std::ofstream fs(path);
+		
+	if (fs.fail())
+	{
+		std::cerr << "Failed to open file "
+		          << "\"" << path << "\"\n";
+		return;
+	}
+	
+	fs << request;
+	fs.close();
 }
 
 bool respond(asio::ip::tcp::socket& sock, ERequest requestType)
@@ -278,14 +471,24 @@ std::string getPostResponse()
 {
 #if 0
 	return "HTTP/1.1 200 OK\r\n"
-           "Content-Length: 32\r\n"
-           "Content-Type: application/json\r\n\r\n"
-           "{\"success\":\"true\"}\r\n\r\n";
-#else
-	return "HTTP/1.1 200 OK\r\n"
            "Content-Length: 18\r\n"
            "Content-Type: application/json\r\n\r\n"
            "{\"success\":\"true\"}\r\n\r\n";
 #endif
+
+	std::string request;
+
+	try
+	{
+		std::lock_guard<std::mutex> lock(reloadResponseArgs.m_responseLock);
+		
+		request = reloadResponseArgs.m_response;
+	}
+	catch (std::logic_error&)
+	{
+		std::cout << __FUNCTION__ << ": lock_guard exception";
+	}
+	
+	return request;
 }
 
