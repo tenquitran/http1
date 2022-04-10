@@ -41,6 +41,12 @@ struct CmdLineArguments
 	std::string m_responseFilePath;
 };
 
+pthread_t g_tidMain = {};
+
+pthread_t g_tidrr = {};
+
+std::unique_ptr<asio::ip::tcp::acceptor> g_spAcceptor;
+
 ///////////////////////////////////////////////////////////////////////
 
 void displayUsage(const char* programName);
@@ -72,6 +78,8 @@ void sigHandler(int arg);
 int main(int argc, char* argv[])
 {
 	signal(SIGINT, sigHandler);
+	
+	g_tidMain = pthread_self();
 
     CmdLineArguments args;
 
@@ -80,9 +88,7 @@ int main(int argc, char* argv[])
     	displayUsage(argv[0]);
     	return 1;
     }
-    
-    // TODO: reload and response options
-    
+
     reloadResponseArgs.m_responseFilePath = args.m_responseFilePath;
 
     reloadResponseArgs.m_delaySeconds = args.m_reloadSeconds;
@@ -94,9 +100,7 @@ int main(int argc, char* argv[])
 
 	try
 	{
-		pthread_t tidrr;
-		
-		int res = pthread_create(&tidrr, nullptr, &tpReloadResponse, (void *)&reloadResponseArgs);
+		int res = pthread_create(&g_tidrr, nullptr, &tpReloadResponse, (void *)&reloadResponseArgs);
 			
 		if (0 != res)
 		{
@@ -114,24 +118,18 @@ int main(int argc, char* argv[])
 		
 		asio::io_service io;
 		
-		asio::ip::tcp::acceptor acceptor = asio::ip::tcp::acceptor(io, ep);
+		//asio::ip::tcp::acceptor acceptor = asio::ip::tcp::acceptor(io, ep);
+		g_spAcceptor = std::make_unique<asio::ip::tcp::acceptor>(io, ep);
 
-		acceptor.listen();
+		g_spAcceptor->listen();
 		
 		std::cout << "Press Ctrl+C to stop the server" << std::endl;
 
 		while (false == reloadResponseArgs.m_exitThread.load())
 		{
-#if 1
 			asio::ip::tcp::socket sock(io);
 			
-			// TODO: temp
-			std::cout << "Before accept()" << std::endl;
-
-			acceptor.accept(sock);
-			
-			// TODO: temp
-			std::cout << "After accept()" << std::endl;
+			g_spAcceptor->accept(sock);
 
 			std::string clientIp = sock.remote_endpoint().address().to_string();
 			
@@ -152,29 +150,7 @@ int main(int argc, char* argv[])
 			sock.shutdown(boost::asio::ip::tcp::socket::shutdown_both);
 			
 			sock.close();
-#else
-			sleep(1);
-#endif
 		}
-		
-Exit:
-		// TODO: temp
-		std::cout << "Exit label" << std::endl;
-
-		void *rrExit;
-			
-		res = pthread_join(tidrr, &rrExit);
-		
-		if (0 != res)
-		{
-			std::cerr << "Failed to join the POST response reloader thread: " << res << '\n';
-		}
-		else
-		{
-			std::cout << "POST response reloader thread returned " << (long)rrExit << std::endl;
-		}
-
-		acceptor.close();
 	}
 	catch (system::system_error& ex)
 	{
@@ -187,11 +163,27 @@ Exit:
 
 void sigHandler(int arg)
 {
-	// TODO: temp
-	std::cout << "Ctrl+C" << std::endl;
-
 	// Notify the POST response reloader thread to exit.
 	reloadResponseArgs.m_exitThread.store(true);
+	
+	g_spAcceptor->close();
+	
+	void *rrExit;
+			
+	int res = pthread_join(g_tidrr, &rrExit);
+	
+	if (0 != res)
+	{
+		std::cerr << "Failed to join the POST response reloader thread: " << res << '\n';
+	}
+	else
+	{
+		std::cout << "POST response reloader thread returned " << (long)rrExit << std::endl;
+	}
+	
+	std::cout << "Canceling the main thread" << std::endl;
+	
+	pthread_cancel(g_tidMain);
 }
 
 void displayUsage(const char* programName)
