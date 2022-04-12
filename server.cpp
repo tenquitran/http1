@@ -7,6 +7,7 @@
 #include <boost/program_options.hpp>
 #include "common.h"
 #include "cmdArgs.h"
+#include "workerThread.h"
 
 ///////////////////////////////////////////////////////////////////////
 
@@ -32,7 +33,6 @@ struct ReloadResponseArgs
 	
 	std::string m_responseFilePath;
 } reloadResponseArgs;
-
 
 pthread_t g_tidMain = {};
 
@@ -69,6 +69,21 @@ int main(int argc, char* argv[])
 	signal(SIGINT, sigHandler);
 	
 	g_tidMain = pthread_self();
+	
+	// TODO: temp: testing worker thread code
+#if 1
+	PostReloader pr("testOne");
+	if (!pr.launch())
+	{
+		std::cout << "Failed to launch wt" << std::endl;
+	}
+	else
+	{
+		std::cout << "wt launched" << std::endl;
+	}
+	void *pExit;
+	int res = pthread_join(pr.m_tid, &pExit);
+#endif
 
     CmdLineArguments args;
 
