@@ -91,6 +91,12 @@ std::string receiveData(asio::ip::tcp::socket& sock)
 			boost::asio::buffer(lenBuff),
 			0);
 		
+		if (cbReceived < 2)
+		{
+			std::cerr << "Failed to receive message length\n";
+			return "";
+		}
+		
 		uint16_t n = lenBuff[1];
 		n += lenBuff[0] << 8;
 		

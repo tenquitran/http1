@@ -84,8 +84,6 @@ int main(int argc, char* argv[])
     // Initial loading of the POST response.
     loadPostResponse(reloadResponseArgs.m_responseFilePath);
 
-    ERequest requestType = ERequest::Undefined;
-
 	try
 	{
 		int res = pthread_create(&g_tidrr, nullptr, &tpReloadResponse, (void *)&reloadResponseArgs);
@@ -97,8 +95,6 @@ int main(int argc, char* argv[])
 		}
 		
 		std::cout << "Started the POST response reloader thread" << std::endl;
-	
-		asio::ip::tcp protocol = asio::ip::tcp::v4();
 		
 		asio::ip::address serverIp = asio::ip::address_v4::any();
 

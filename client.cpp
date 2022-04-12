@@ -114,8 +114,6 @@ int main(int argc, char* argv[])
 
 	try
 	{
-		asio::ip::tcp protocol = asio::ip::tcp::v4();
-		
 		asio::ip::tcp::endpoint ep(
 			asio::ip::address::from_string(args.m_ipAddress), 
 			args.m_port);
