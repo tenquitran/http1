@@ -2,9 +2,10 @@
 #include <string>
 #include <fstream>
 #include <sstream>
+#include <mutex>
 #include <boost/asio.hpp>
-#include <boost/program_options.hpp>
 #include "common.h"
+#include "cmdArgs.h"
 
 ///////////////////////////////////////////////////////////////////////
 
@@ -63,31 +64,7 @@ struct KeepAliveArgs
 	std::weak_ptr<asio::ip::tcp::socket> m_spSocket;
 } keepAliveArgs;
 
-
-struct CmdLineArguments
-{
-	std::string m_ipAddress;
-	
-	unsigned short m_port = {};
-	
-	std::string m_requestFilePath;
-	
-	int m_keepAliveSeconds = {};
-	
-	// true if the client will send only HEAD keep-alive requests, 
-	// false if it will send only POST requests.
-	bool m_keepAliveMode = {false};
-	
-	int m_postSeconds = {};
-	
-	int m_reloadSeconds = {};
-};
-
 ///////////////////////////////////////////////////////////////////////
-
-void displayUsage(const char* programName);
-
-bool parseCmdLineArgs(int argc, char* argv[], CmdLineArguments& args);
 
 // Thread procedure to send keep-alive HEAD requests.
 void *tpKeepAliveTimer(void *arg);
@@ -119,11 +96,10 @@ int main(int argc, char* argv[])
 
     CmdLineArguments args;
 
-    if (!parseCmdLineArgs(argc, argv, args))
-    {
-    	displayUsage(argv[0]);
-    	return 1;
-    }
+	if (!CmdArgsHandler::parse(argc, argv, args))
+	{
+		return 1;
+	}
 
     // Initial loading of the POST request.
     loadPostRequest(args.m_requestFilePath);
@@ -288,133 +264,6 @@ void sigHandler(int arg)
 	sendPostArgs.m_exitThread.store(true);
 	
 	keepAliveArgs.m_exitThread.store(true);
-}
-
-void displayUsage(const char* programName)
-{
-	// --host=hostname    - the host of HTTP server
-	// --port=portnumber  - the port of HTTP server
-	// --keep-alive=XX    - run HTTP client with keep-alive HEAD requests every XX seconds
-	// --post-request=XX  - send HTTP POST request every XX seconds
-	// --reload=XX        - every XX seconds reload the file where the Request is stored
-	// --request=/path/to/Request.json  - path to Request.html used by client to send to the Server
-
-	std::cout << "Usage (variant 1, sending keep-alive HEAD requests):\n\n"
-			  << programName 
-			  << " --host=<ip_address> --port=<port_number> "
-			     "--keep-alive=<seconds>\n"
-
-			  << "\nUsage (variant 2, sending POST requests from the specified file):\n\n"
-			  << programName
-			  << " --host=<ip_address> --port=<port_number> "
-			     "--post-request=<seconds> "
-			     "--reload=<seconds> --request=/path/to/Request.json\n"
-			  
-			  << "\nExample 1:\n\n"
-	          << programName 
-	          << " --host=127.0.0.1 --port=8976 --keep-alive=7\n\n" 
-	          
-	          << "\nExample 2:\n\n"
-	          << programName 
-	          << " --host=127.0.0.1 --port=8976 "
-	             "--post-request=5 --request=requests/post_request.json --reload=5"
-	          << std::endl;
-}
-
-bool parseCmdLineArgs(int argc, char* argv[], CmdLineArguments& args)
-{
-	using namespace boost::program_options;
-	
-	// There should be at least "host" and "port" options 
-	// and either "keep-alive" or a set of POST options.
-	if (argc < 4)
-		{return false;}
-
-    options_description desc{"CommandLineOptions"};
-    
-    desc.add_options()
-      ("host",         value<std::string>()->default_value("127.0.0.1"), "HostName")
-      ("port",         value<int>()->default_value(8976),                "Port")
-      ("keep-alive",   value<int>()->default_value(7),                   "KeepAlive")
-      ("post-request", value<int>()->default_value(5),                   "PostRequest")
-      ("reload",       value<int>()->default_value(6),                   "Reload")
-      ("request",      value<std::string>()->default_value(""),          "RequestPath");
-      
-    variables_map vm;
-    
-	try
-	{
-		store(parse_command_line(argc, argv, desc), vm);
-		notify(vm);
-	}
-	catch(const std::exception& ex)
-	{
-    	std::cerr << ex.what() << std::endl;
-    	return false;
-  	}
-
-	if (vm.count("host"))
-	{
-		std::cout << "Host name: " << vm["host"].as<std::string>() << std::endl;
-		args.m_ipAddress = vm["host"].as<std::string>();
-	}
-	else
-		{return false;}
-	
-	if (vm.count("port"))
-	{
-		std::cout << "Port: " << vm["port"].as<int>() << std::endl;
-		args.m_port = vm["port"].as<int>();
-	}
-	else
-		{return false;}
-	
-	// We are suppose that the "keep-alive" command-line option 
-	// is mutually exclusive with the set of options "post-request", "reload" and "request" -
-	// that is, that the client will send either only keep-alive HEAD requests 
-	// or only POST requests.
-	
-	if (!vm["keep-alive"].defaulted())
-	{
-		std::cout << "Keep-alive: " << vm["keep-alive"].as<int>() << std::endl;
-		
-		args.m_keepAliveSeconds = vm["keep-alive"].as<int>();
-		args.m_keepAliveMode = true;
-		
-		std::cout << "Mode: keep-alive" << std::endl;
-		
-		return true;
-	}
-	else
-	{
-		if (vm.count("post-request"))
-		{
-			std::cout << "Post-request: " << vm["post-request"].as<int>() << std::endl;
-			args.m_postSeconds = vm["post-request"].as<int>();
-		}
-		else
-			{return false;}
-			
-		if (vm.count("reload"))
-		{
-			std::cout << "Reload: " << vm["reload"].as<int>() << std::endl;
-			args.m_reloadSeconds = vm["reload"].as<int>();
-		}
-		else
-			{return false;}
-
-		if (vm.count("request"))
-		{
-			std::cout << "Request path: " << vm["request"].as<std::string>() << std::endl;
-			args.m_requestFilePath = vm["request"].as<std::string>();
-		}
-		else
-			{return false;}
-			
-		std::cout << "Mode: POST" << std::endl;
-	}
-
-	return true;
 }
 
 // Thread procedure to reload the POST request from file.
