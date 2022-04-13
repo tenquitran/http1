@@ -5,7 +5,7 @@
 #include <string>
 
 
-// Helper class for POST response reloading.
+// Server: helper class for POST response reloading.
 class ResponseReloader
 {
 public:

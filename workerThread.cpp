@@ -4,7 +4,8 @@
 
 ///////////////////////////////////////////////////////////////////////
 
-
+// TODO: not used
+#if 0
 WorkerThread::WorkerThread(const std::string& name)
 	: m_name(name)
 {
@@ -29,24 +30,5 @@ void* WorkerThread::tpHelper(void* context)
 {
     return ((WorkerThread *)context)->threadProc((WorkerThread *)context);
 }
-
-
-///////////////////////////////////////////////////////////////////////
-// TODO: move to separate .h and .cpp files
-///////////////////////////////////////////////////////////////////////
-
-PostReloader::PostReloader(const std::string& name)
-	: WorkerThread(name)
-{
-}
-
-void* PostReloader::threadProc(void* arg)
-{
-	PostReloader *pThis = (PostReloader *)arg;
-	
-	// TODO: implement
-	std::cout << "My field is " << pThis->m_num << std::endl;
-	
-	return 0;
-}
+#endif
 

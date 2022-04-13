@@ -10,9 +10,9 @@
 #include <boost/program_options.hpp>
 #include "common.h"
 #include "cmdArgs.h"
-#include "workerThread.h"
 #include "responseReloader.h"
 #include "intervalTimer.h"
+#include "serverAsio.h"
 
 ///////////////////////////////////////////////////////////////////////
 
@@ -20,9 +20,10 @@ using namespace boost;
 
 ///////////////////////////////////////////////////////////////////////
 
-// TODO: temp?
 std::mutex g_condMutex;
+
 bool g_cond = {false};
+
 std::condition_variable g_cv;
 
 bool checkCondVar()
@@ -41,7 +42,7 @@ std::string getHeadResponse();
 
 ERequest getMessageType(const std::string& msg);
 
-bool exchangeMessages(asio::ip::tcp::socket& sock, unsigned short serverPort, unsigned short clientPort);
+bool exchangeMessages(UPSocket& sock, unsigned short serverPort, unsigned short clientPort);
 
 void saveRequestToFile(const std::string& request, unsigned short serverPort, unsigned short clientPort);
 
@@ -49,15 +50,18 @@ void sigHandler(int arg);
 
 ///////////////////////////////////////////////////////////////////////
 
+// Helper object to reload POST responses.
 ResponseReloader g_responseReloader;
 
 pthread_t g_tidMain = {};
 
 pthread_t g_tidrr = {};
 
-std::unique_ptr<asio::ip::tcp::acceptor> g_spAcceptor;
-
+// Timer to reload POST responses.
 std::unique_ptr<IntervalTimer<ResponseReloader> > g_spTimerPostReload;
+
+// Boost.Asio server.
+std::unique_ptr<ServerAsio> g_spServer;
 
 ///////////////////////////////////////////////////////////////////////
 
@@ -67,21 +71,6 @@ int main(int argc, char* argv[])
 	signal(SIGINT, sigHandler);
 	
 	g_tidMain = pthread_self();
-	
-	// TODO: temp: testing worker thread code
-#if 0
-	PostReloader pr("testOne");
-	if (!pr.launch())
-	{
-		std::cout << "Failed to launch wt" << std::endl;
-	}
-	else
-	{
-		std::cout << "wt launched" << std::endl;
-	}
-	void *pExit;
-	int res = pthread_join(pr.m_tid, &pExit);
-#endif
 
     CmdLineArguments args;
 
@@ -111,33 +100,25 @@ int main(int argc, char* argv[])
 		
 		std::cout << "Started the POST response reloader thread" << std::endl;
 		
-		asio::ip::address serverIp = asio::ip::address_v4::any();
+		g_spServer = std::make_unique<ServerAsio>(args.m_port);
 
-		asio::ip::tcp::endpoint ep = asio::ip::tcp::endpoint(serverIp, args.m_port);
-		
-		asio::io_service io;
-		
-		g_spAcceptor = std::make_unique<asio::ip::tcp::acceptor>(io, ep);
-
-		g_spAcceptor->listen();
+		g_spServer->listen();
 		
 		std::cout << "Press Ctrl+C to stop the server" << std::endl;
 
 		while (true)    // accept client connections
 		{
-			asio::ip::tcp::socket sock(io);
+			UPSocket spSock = g_spServer->accept();
 
-			g_spAcceptor->accept(sock);
-
-			std::string clientIp = sock.remote_endpoint().address().to_string();
+			std::string clientIp = spSock->remote_endpoint().address().to_string();
 			
-			unsigned short clientPort = sock.remote_endpoint().port();
+			unsigned short clientPort = spSock->remote_endpoint().port();
 			
 			std::cout << "Accepted client connection: " << clientIp << ":" << clientPort << std::endl;
 
 			while (true)
 			{
-				if (!exchangeMessages(sock, args.m_port, clientPort))
+				if (!exchangeMessages(spSock, args.m_port, clientPort))
 				{
 					break;
 				}
@@ -145,9 +126,9 @@ int main(int argc, char* argv[])
 			
 			std::cout << "Client " << clientIp << " closed the connection" << std::endl;
 			
-			sock.shutdown(boost::asio::ip::tcp::socket::shutdown_both);
+			spSock->shutdown(boost::asio::ip::tcp::socket::shutdown_both);
 			
-			sock.close();
+			spSock->close();
 		}   // accept client connections
 	}
 	catch (system::system_error& ex)
@@ -171,10 +152,8 @@ void sigHandler(int arg)
 	}
 
 	g_spTimerPostReload->disarmAndDelete();
-	//deleteTimer(g_timerId);
 	
-	//shutdown(g_spAcceptor->native_handle(), SHUT_RD);
-	g_spAcceptor->close();
+	g_spServer->close();
 	
 	void *rrExit;
 			
@@ -189,9 +168,8 @@ void sigHandler(int arg)
 		std::cout << "POST response reloader thread returned " << (long)rrExit << std::endl;
 	}
 	
-	// The main thread is most likely stuck on accept().
-	// For some reason, pthread_cancel() doesn't work, at least in Ubuntu.
-
+	// The main thread is stuck, usually on accept().
+	// pthread_cancel() doesn't work, at least in Ubuntu.
 	pthread_kill(g_tidMain, SIGKILL);
 }
 
@@ -216,9 +194,9 @@ void *tpReloadResponse(void *arg)
 	return 0;
 }
 
-bool exchangeMessages(asio::ip::tcp::socket& sock, unsigned short serverPort, unsigned short clientPort)
+bool exchangeMessages(UPSocket& spSock, unsigned short serverPort, unsigned short clientPort)
 {
-	std::string fromClient = receiveData(sock);
+	std::string fromClient = receiveData(*spSock);
 
 	if (fromClient.length() < 1)
 	{
@@ -239,7 +217,7 @@ bool exchangeMessages(asio::ip::tcp::socket& sock, unsigned short serverPort, un
 		return false;
 	}
 
-	if (!respond(sock, requestType))
+	if (!respond(*spSock, requestType))
 	{
 		std::cerr << "Failed to respond to the client\n";
 		return false;

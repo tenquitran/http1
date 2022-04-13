@@ -17,10 +17,7 @@ void ResponseReloader::periodicAction()
 }
 
 void ResponseReloader::loadPostResponse()
-{
-	// TODO: temp
-	std::cout << "RR" << std::endl;
-	
+{	
 	std::ifstream fs(m_responseFilePath);
 		
 	if (fs.fail())

@@ -96,13 +96,8 @@ private:
 	virtual void expired(void* p)
 	{
 		T *pArg = (T *)p;
-		//ReloadResponseArgs *pArg = (ReloadResponseArgs *)p;
-		
-		// TODO: temp
-		std::cout << "Timer expired. Path: " << pArg->m_responseFilePath << std::endl;
-		
+
 		pArg->periodicAction();
-		//loadPostResponse(pArg->m_responseFilePath);
 	}
 
 private:

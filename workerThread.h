@@ -1,6 +1,8 @@
 #ifndef _WORKER_THREAD_H
 #define _WORKER_THREAD_H
 
+// TODO: not used
+#if 0
 class WorkerThread
 {
 public:
@@ -27,24 +29,7 @@ public:
 
 	pthread_t m_tid = {};
 };
-
-// TODO: move to separate .h and .cpp files
-
-// Server: POST response reloader thread.
-class PostReloader
-	: public WorkerThread
-{
-public:
-	// Parameters: name - thread name.
-	explicit PostReloader(const std::string& name);
-
-	// Thread procedure.
-	virtual void* threadProc(void* arg) override;
-	
-private:
-	// TODO: temp
-	int m_num = {123};
-};
+#endif
 
 #endif
 
