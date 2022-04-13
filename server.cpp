@@ -11,6 +11,8 @@
 #include "common.h"
 #include "cmdArgs.h"
 #include "workerThread.h"
+#include "responseReloader.h"
+#include "intervalTimer.h"
 
 ///////////////////////////////////////////////////////////////////////
 
@@ -18,59 +20,24 @@ using namespace boost;
 
 ///////////////////////////////////////////////////////////////////////
 
-struct ReloadResponseArgs
-{
-	ReloadResponseArgs()
-		: m_delaySeconds(5)
-	{
-	}
-
-	int m_delaySeconds = {};
-	
-	std::mutex m_responseLock;
-	
-	std::string m_response;
-	
-	std::string m_responseFilePath;
-} reloadResponseArgs;
-
-pthread_t g_tidMain = {};
-
-pthread_t g_tidrr = {};
-
-std::unique_ptr<asio::ip::tcp::acceptor> g_spAcceptor;
-
-///////////////////////////////////////////////////////////////////////
-
 // TODO: temp?
-timer_t g_timerId = 0;
 std::mutex g_condMutex;
 bool g_cond = {false};
 std::condition_variable g_cv;
-
-bool createAndSetTimer(timer_t& timerId, ReloadResponseArgs *pArg);
-
-bool deleteTimer(const timer_t& timerId);
 
 bool checkCondVar()
 {
 	return g_cond;
 }
 
-void expired(union sigval arg);
-
 ///////////////////////////////////////////////////////////////////////
 
 // Thread procedure to reload the POST response from file.
 void *tpReloadResponse(void *arg);
 
-void loadPostResponse(const std::string& filePath);
-
 bool respond(asio::ip::tcp::socket& sock, ERequest requestType);
 
 std::string getHeadResponse();
-
-std::string getPostResponse();
 
 ERequest getMessageType(const std::string& msg);
 
@@ -79,6 +46,18 @@ bool exchangeMessages(asio::ip::tcp::socket& sock, unsigned short serverPort, un
 void saveRequestToFile(const std::string& request, unsigned short serverPort, unsigned short clientPort);
 
 void sigHandler(int arg);
+
+///////////////////////////////////////////////////////////////////////
+
+ResponseReloader g_responseReloader;
+
+pthread_t g_tidMain = {};
+
+pthread_t g_tidrr = {};
+
+std::unique_ptr<asio::ip::tcp::acceptor> g_spAcceptor;
+
+std::unique_ptr<IntervalTimer<ResponseReloader> > g_spTimerPostReload;
 
 ///////////////////////////////////////////////////////////////////////
 
@@ -111,16 +90,18 @@ int main(int argc, char* argv[])
     	return 1;
     }
 
-    reloadResponseArgs.m_responseFilePath = args.m_responseFilePath;
+    g_responseReloader.m_responseFilePath = args.m_responseFilePath;
 
-    reloadResponseArgs.m_delaySeconds = args.m_reloadSeconds;
+    g_responseReloader.m_delaySeconds = args.m_reloadSeconds;
     
     // Initial loading of the POST response.
-    loadPostResponse(reloadResponseArgs.m_responseFilePath);
+    g_responseReloader.loadPostResponse();
+    
+    g_spTimerPostReload = std::make_unique<IntervalTimer<ResponseReloader> >(&g_responseReloader);
 
 	try
 	{
-		int res = pthread_create(&g_tidrr, nullptr, &tpReloadResponse, (void *)&reloadResponseArgs);
+		int res = pthread_create(&g_tidrr, nullptr, &tpReloadResponse, nullptr);
 			
 		if (0 != res)
 		{
@@ -189,7 +170,8 @@ void sigHandler(int arg)
 		g_cv.notify_all();
 	}
 
-	deleteTimer(g_timerId);
+	g_spTimerPostReload->disarmAndDelete();
+	//deleteTimer(g_timerId);
 	
 	//shutdown(g_spAcceptor->native_handle(), SHUT_RD);
 	g_spAcceptor->close();
@@ -215,19 +197,8 @@ void sigHandler(int arg)
 
 void *tpReloadResponse(void *arg)
 {
-#if 0
-	ReloadResponseArgs *pArg = (ReloadResponseArgs *)arg;
-
-	while (!pArg->m_exitThread)
-	{
-		loadPostResponse(pArg->m_responseFilePath);
-
-		sleep(pArg->m_delaySeconds);
-	}
-#else
-	ReloadResponseArgs *pArg = (ReloadResponseArgs *)arg;
-
-	createAndSetTimer(g_timerId, pArg);
+	g_spTimerPostReload->create();
+	g_spTimerPostReload->set();
 	
 	// TODO: temp
 	std::cout << "tproc: waiting for condition variable..." << std::endl;
@@ -239,104 +210,10 @@ void *tpReloadResponse(void *arg)
 
 	// TODO: temp
 	std::cout << "tproc: finished waiting for condition variable" << std::endl;
-#endif
 	
 	std::cout << "POST response reload thread exit" << std::endl;
 	
 	return 0;
-}
-
-void expired(union sigval arg)
-{
-    ReloadResponseArgs *pArg = (ReloadResponseArgs *)arg.sival_ptr;
-
-	loadPostResponse(pArg->m_responseFilePath);
-}
-
-bool createAndSetTimer(timer_t& timerId, ReloadResponseArgs *pArg)
-{
-    itimerspec its;
-	its.it_value.tv_sec  = pArg->m_delaySeconds;    /* start delay */
-	its.it_value.tv_nsec = 0;
-	its.it_interval.tv_sec  = pArg->m_delaySeconds;    /* interval */
-	its.it_interval.tv_nsec = 0;
-
-	// Timer expiration behaviour.
-	sigevent sev = {};
-    sev.sigev_notify = SIGEV_THREAD;
-    sev.sigev_notify_function = &expired;
-    sev.sigev_value.sival_ptr = pArg;
-
-    int res = timer_create(CLOCK_REALTIME, &sev, &timerId);
-
-    if (0 != res)
-	{
-		perror("timer_create() failed");
-        return false;
-    }
-
-    res = timer_settime(timerId, 0, &its, nullptr);
-
-    if (0 != res)
-	{
-		perror("timer_settime() failed");
-        return false;
-    }
-	
-	return true;
-}
-
-bool deleteTimer(const timer_t& timerId)
-{
-	int res = timer_delete(timerId);
-	
-	if (0 != res)
-	{
-		perror("timer_delete() failed");
-		return false;
-	}
-	
-	std::cout << "Timer deleted" << std::endl;
-	return true;
-}
-
-void loadPostResponse(const std::string& filePath)
-{
-	std::ifstream fs(filePath);
-		
-	if (fs.fail())
-	{
-		std::cerr << "Failed to load POST response from the file "
-		          << "\"" << filePath << "\"\n";
-		return;
-	}
-	
-	std::stringstream buffer;
-	buffer << fs.rdbuf();
-	
-	fs.close();
-	
-	std::string payload = buffer.str();
-
-	// 2 bytes for "\r\n" following the payload.
-	std::string payloadLen = std::to_string(payload.length() + 2);
-
-	std::string response = "HTTP/1.1 200 OK\r\n"
-						   "Content-Length: " + payloadLen + "\r\n"
-						   "Content-Type: application/json; utf-8\r\n";
-	
-	response += payload + "\r\n\r\n";
-
-	try
-	{
-		std::lock_guard<std::mutex> lock(reloadResponseArgs.m_responseLock);
-	
-		reloadResponseArgs.m_response = response;
-	}
-	catch (std::logic_error&)
-	{
-		std::cout << "POST response reloader thread: lock_guard exception";
-	}
 }
 
 bool exchangeMessages(asio::ip::tcp::socket& sock, unsigned short serverPort, unsigned short clientPort)
@@ -426,7 +303,7 @@ bool respond(asio::ip::tcp::socket& sock, ERequest requestType)
 			response = getHeadResponse();
 			break;
 		case ERequest::Post:
-			response = getPostResponse();
+			response = g_responseReloader.getPostResponse();
 			break;
 		default:
 			std::cerr << __FUNCTION__ << ": unsupported request type\n";
@@ -477,23 +354,5 @@ std::string getHeadResponse()
 	return "HTTP/1.1 200 OK\r\n"
            "Content-Length: 27\r\n"
            "Content-Type: text/html; charset=UTF-8\r\n\r\n";
-}
-
-std::string getPostResponse()
-{
-	std::string request;
-
-	try
-	{
-		std::lock_guard<std::mutex> lock(reloadResponseArgs.m_responseLock);
-		
-		request = reloadResponseArgs.m_response;
-	}
-	catch (std::logic_error&)
-	{
-		std::cout << __FUNCTION__ << ": lock_guard exception";
-	}
-	
-	return request;
 }
 
