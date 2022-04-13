@@ -3,6 +3,9 @@
 #include <fstream>
 #include <sstream>
 #include <mutex>
+#include <condition_variable>
+#include <signal.h>
+#include <time.h>
 #include <boost/asio.hpp>
 #include <boost/program_options.hpp>
 #include "common.h"
@@ -20,10 +23,7 @@ struct ReloadResponseArgs
 	ReloadResponseArgs()
 		: m_delaySeconds(5)
 	{
-		m_exitThread.store(false);
 	}
-
-	std::atomic<bool> m_exitThread;
 
 	int m_delaySeconds = {};
 	
@@ -39,6 +39,25 @@ pthread_t g_tidMain = {};
 pthread_t g_tidrr = {};
 
 std::unique_ptr<asio::ip::tcp::acceptor> g_spAcceptor;
+
+///////////////////////////////////////////////////////////////////////
+
+// TODO: temp?
+timer_t g_timerId = 0;
+std::mutex g_condMutex;
+bool g_cond = {false};
+std::condition_variable g_cv;
+
+bool createAndSetTimer(timer_t& timerId, ReloadResponseArgs *pArg);
+
+bool deleteTimer(const timer_t& timerId);
+
+bool checkCondVar()
+{
+	return g_cond;
+}
+
+void expired(union sigval arg);
 
 ///////////////////////////////////////////////////////////////////////
 
@@ -71,7 +90,7 @@ int main(int argc, char* argv[])
 	g_tidMain = pthread_self();
 	
 	// TODO: temp: testing worker thread code
-#if 1
+#if 0
 	PostReloader pr("testOne");
 	if (!pr.launch())
 	{
@@ -123,10 +142,10 @@ int main(int argc, char* argv[])
 		
 		std::cout << "Press Ctrl+C to stop the server" << std::endl;
 
-		while (false == reloadResponseArgs.m_exitThread.load())
+		while (true)    // accept client connections
 		{
 			asio::ip::tcp::socket sock(io);
-			
+
 			g_spAcceptor->accept(sock);
 
 			std::string clientIp = sock.remote_endpoint().address().to_string();
@@ -148,7 +167,7 @@ int main(int argc, char* argv[])
 			sock.shutdown(boost::asio::ip::tcp::socket::shutdown_both);
 			
 			sock.close();
-		}
+		}   // accept client connections
 	}
 	catch (system::system_error& ex)
 	{
@@ -161,9 +180,18 @@ int main(int argc, char* argv[])
 
 void sigHandler(int arg)
 {
+	std::cout << "\nCtrl+C signal handler. Cleaning up..." << std::endl;
+
 	// Notify the POST response reloader thread to exit.
-	reloadResponseArgs.m_exitThread.store(true);
+	{
+		std::unique_lock<std::mutex> lock(g_condMutex);
+		g_cond = true;
+		g_cv.notify_all();
+	}
+
+	deleteTimer(g_timerId);
 	
+	//shutdown(g_spAcceptor->native_handle(), SHUT_RD);
 	g_spAcceptor->close();
 	
 	void *rrExit;
@@ -179,13 +207,15 @@ void sigHandler(int arg)
 		std::cout << "POST response reloader thread returned " << (long)rrExit << std::endl;
 	}
 	
-	std::cout << "Canceling the main thread" << std::endl;
-	
-	pthread_cancel(g_tidMain);
+	// The main thread is most likely stuck on accept().
+	// For some reason, pthread_cancel() doesn't work, at least in Ubuntu.
+
+	pthread_kill(g_tidMain, SIGKILL);
 }
 
 void *tpReloadResponse(void *arg)
 {
+#if 0
 	ReloadResponseArgs *pArg = (ReloadResponseArgs *)arg;
 
 	while (!pArg->m_exitThread)
@@ -194,10 +224,80 @@ void *tpReloadResponse(void *arg)
 
 		sleep(pArg->m_delaySeconds);
 	}
+#else
+	ReloadResponseArgs *pArg = (ReloadResponseArgs *)arg;
+
+	createAndSetTimer(g_timerId, pArg);
+	
+	// TODO: temp
+	std::cout << "tproc: waiting for condition variable..." << std::endl;
+
+	{
+		std::unique_lock<std::mutex> lock {g_condMutex};
+		g_cv.wait(lock, checkCondVar);
+	}
+
+	// TODO: temp
+	std::cout << "tproc: finished waiting for condition variable" << std::endl;
+#endif
 	
 	std::cout << "POST response reload thread exit" << std::endl;
 	
 	return 0;
+}
+
+void expired(union sigval arg)
+{
+    ReloadResponseArgs *pArg = (ReloadResponseArgs *)arg.sival_ptr;
+
+	loadPostResponse(pArg->m_responseFilePath);
+}
+
+bool createAndSetTimer(timer_t& timerId, ReloadResponseArgs *pArg)
+{
+    itimerspec its;
+	its.it_value.tv_sec  = pArg->m_delaySeconds;    /* start delay */
+	its.it_value.tv_nsec = 0;
+	its.it_interval.tv_sec  = pArg->m_delaySeconds;    /* interval */
+	its.it_interval.tv_nsec = 0;
+
+	// Timer expiration behaviour.
+	sigevent sev = {};
+    sev.sigev_notify = SIGEV_THREAD;
+    sev.sigev_notify_function = &expired;
+    sev.sigev_value.sival_ptr = pArg;
+
+    int res = timer_create(CLOCK_REALTIME, &sev, &timerId);
+
+    if (0 != res)
+	{
+		perror("timer_create() failed");
+        return false;
+    }
+
+    res = timer_settime(timerId, 0, &its, nullptr);
+
+    if (0 != res)
+	{
+		perror("timer_settime() failed");
+        return false;
+    }
+	
+	return true;
+}
+
+bool deleteTimer(const timer_t& timerId)
+{
+	int res = timer_delete(timerId);
+	
+	if (0 != res)
+	{
+		perror("timer_delete() failed");
+		return false;
+	}
+	
+	std::cout << "Timer deleted" << std::endl;
+	return true;
 }
 
 void loadPostResponse(const std::string& filePath)
